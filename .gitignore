@@ -1,0 +1,5 @@
+.DS_Store
+.venv
+.uploaded_inputs
+*__pycache__/
+synthetic_multi_robot_logs_package/
