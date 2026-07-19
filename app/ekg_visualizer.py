@@ -1,17 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
 import neo4j_shared
 
 
-ACTIVITY_COLOR = "#8EC5FC"
-NO_PERSPECTIVE = "<DF edges without perspective_type>"
-ALL_OPTION = "All"
-PERSPECTIVE_PALETTE = [
+AGGREGATION_OPTIONS = {
+    "Mission ID": ("mission", "id", "Mission_id"),
+    "Mission type": ("mission", "type", "Mission_type"),
+    "Robot ID": ("robot", "id", "Robot_id"),
+    "Robot type": ("robot", "type", "Robot_type"),
+    "Segment ID": ("segment", "id", "Segment_id"),
+    "Segment type": ("segment", "type", "Segment_type"),
+}
+
+CLASS_COLOR = "#8EC5FC"
+PERSPECTIVE_COLORS = [
     "#D1495B",
     "#2E86AB",
     "#3C8D40",
@@ -23,158 +29,77 @@ PERSPECTIVE_PALETTE = [
 ]
 
 
-def normalize_value(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Mapping):
-        return {str(key): normalize_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [normalize_value(item) for item in value]
-    return str(value)
+def create_class_query(
+    mission_choice: str,
+    robot_choice: str,
+    segment_choice: str,
+) -> str:
+    """Create Class nodes from the entities correlated with each event."""
 
+    selected = [mission_choice, robot_choice, segment_choice]
+    dimensions = [AGGREGATION_OPTIONS[choice] for choice in selected]
 
-def format_seconds(value: Any) -> str:
-    if value is None:
-        return "n/a"
-    try:
-        numeric = float(value)
-        if numeric.is_integer():
-            return f"{int(numeric)}s"
-        return f"{numeric:.2f}s"
-    except Exception:  # noqa: BLE001
-        return str(value)
+    value_expressions = []
+    class_properties = ["Type: 'Class'"]
+    class_id_parts = ["toString(e.activity)"]
+    display_parts = ["'activity=' + toString(e.activity)"]
 
+    for alias, property_name, class_property in dimensions:
+        variable = class_property.lower()
 
-def perspective_color_map(perspective_types: List[str]) -> Dict[str, str]:
-    ordered = sorted(set(perspective_types))
-    return {
-        perspective: PERSPECTIVE_PALETTE[index % len(PERSPECTIVE_PALETTE)]
-        for index, perspective in enumerate(ordered)
-    }
-
-
-def scaled_penwidth(value: Optional[float], minimum: float, maximum: float) -> str:
-    if value is None:
-        return "1.4"
-    if maximum <= minimum:
-        return "3.0"
-    normalized = (float(value) - minimum) / (maximum - minimum)
-    return f"{1.2 + normalized * 4.8:.2f}"
-
-
-def fetch_schema(driver: Any, database: Optional[str]) -> Dict[str, Any]:
-    with driver.session(**neo4j_shared.session_kwargs(database)) as session:
-        labels = [
-            record["label"]
-            for record in session.run(
-                """
-                MATCH (n)
-                UNWIND labels(n) AS label
-                RETURN DISTINCT label
-                ORDER BY label
-                """
+        if alias == "segment":
+            value_expression = (
+                f"coalesce(toString({alias}.{property_name}), '<NO_SEGMENT>')"
             )
-        ]
-        rel_types = [
-            record["rel_type"]
-            for record in session.run(
-                """
-                MATCH ()-[r]->()
-                RETURN DISTINCT type(r) AS rel_type
-                ORDER BY rel_type
-                """
-            )
-        ]
-        logs = [
-            str(record["log"])
-            for record in session.run(
-                """
-                MATCH (n)
-                WHERE n.Log IS NOT NULL
-                RETURN DISTINCT n.Log AS log
-                ORDER BY log
-                """
-            )
-            if record["log"] is not None
-        ]
-        df_property_keys = [
-            record["key"]
-            for record in session.run(
-                """
-                MATCH ()-[r:DF]->()
-                UNWIND keys(r) AS key
-                RETURN DISTINCT key
-                ORDER BY key
-                """
-            )
-        ]
-        perspective_records = session.run(
-            """
-            MATCH ()-[r:DF]->()
-            WITH coalesce(r.perspective_type, $no_perspective) AS perspective_type,
-                 collect(DISTINCT r.perspective_id) AS raw_ids,
-                 count(r) AS edge_count
-            RETURN perspective_type, raw_ids, edge_count
-            ORDER BY perspective_type
-            """,
-            no_perspective=NO_PERSPECTIVE,
+        else:
+            value_expression = f"toString({alias}.{property_name})"
+
+        value_expressions.append(
+            f"{value_expression} AS {variable}"
         )
-        df_perspectives: Dict[str, Dict[str, Any]] = {}
-        for record in perspective_records:
-            perspective_type = str(record["perspective_type"])
-            ids = sorted([str(item) for item in record["raw_ids"] if item is not None])
-            df_perspectives[perspective_type] = {
-                "ids": ids,
-                "edge_count": record["edge_count"],
-            }
+        class_properties.append(f"{class_property}: {variable}")
+        class_id_parts.append(variable)
+        display_parts.append(f"'{class_property}=' + {variable}")
 
-    return {
-        "labels": labels,
-        "relationship_types": rel_types,
-        "logs": logs,
-        "df_property_keys": df_property_keys,
-        "df_perspectives": df_perspectives,
-    }
+    values = ",\n         ".join(value_expressions)
+    properties = ", ".join(class_properties)
+    class_id = " + '|' + ".join(class_id_parts)
+    display_name = " + '\\n' + ".join(display_parts)
 
+    dimension_variables = ", ".join(
+        class_property.lower()
+        for _, _, class_property in dimensions
+    )
 
-def fetch_counts(driver: Any, database: Optional[str], log_name: Optional[str]) -> Dict[str, Any]:
-    query = """
-    MATCH (n)
-    WHERE $log_name IS NULL OR n.Log = $log_name
-    WITH count(n) AS nodes
-    OPTIONAL MATCH (e1:Event)-[df:DF]->(e2:Event)
-    WHERE $log_name IS NULL OR e1.Log = $log_name OR e2.Log = $log_name
-    WITH nodes, count(df) AS df_edges
-    OPTIONAL MATCH (e:Event)
-    WHERE $log_name IS NULL OR e.Log = $log_name
-    RETURN nodes, df_edges, count(e) AS events
+    return f"""
+    MATCH (e:Event)-[:CORR]->(mission:Entity {{type: 'Mission'}})
+    MATCH (e)-[:CORR]->(robot:Entity {{type: 'Robot'}})
+    OPTIONAL MATCH (e)-[:CORR]->(segment:Entity {{type: 'Segment'}})
+    WHERE e.activity IS NOT NULL
+    WITH e,
+         {values}
+    WITH e,
+         {class_id} AS class_id,
+         {display_name} AS display_name,
+         {dimension_variables}
+    MERGE (c:Class {{
+        Event_Id: class_id,
+        {properties}
+    }})
+    SET c.activity = e.activity,
+        c.DisplayName = display_name
+    MERGE (e)-[:OBS]->(c)
+    RETURN count(DISTINCT c) AS class_count,
+           count(DISTINCT e) AS observed_events
     """
-    with driver.session(**neo4j_shared.session_kwargs(database)) as session:
-        record = session.run(query, log_name=log_name).single()
-    return dict(record) if record else {"nodes": 0, "df_edges": 0, "events": 0}
 
-
-def fetch_activity_dfg(
-    driver: Any,
-    database: Optional[str],
-    log_name: Optional[str],
-    perspective_type: Optional[str],
-    perspective_id: Optional[str],
-    min_frequency: int,
-    edge_limit: int,
-) -> List[Dict[str, Any]]:
-    """Return an activity-level directly-follows graph aggregated from Event-DF-Event edges."""
-    query = """
-    MATCH (e1:Event)-[r:DF]->(e2:Event)
-    WHERE ($log_name IS NULL OR e1.Log = $log_name OR e2.Log = $log_name)
-      AND ($perspective_type IS NULL OR coalesce(r.perspective_type, $no_perspective) = $perspective_type)
-      AND ($perspective_id IS NULL OR toString(r.perspective_id) = $perspective_id)
-      AND e1.activity IS NOT NULL
-      AND e2.activity IS NOT NULL
-    WITH e1.activity AS from_activity,
-         e2.activity AS to_activity,
-         coalesce(r.perspective_type, $no_perspective) AS df_perspective_type,
-         count(r) AS frequency,
+def class_df_aggregation_query() -> str:
+    return """
+    MATCH (c1:Class)<-[:OBS]-(e1:Event)-[r:DF]->(e2:Event)-[:OBS]->(c2:Class)
+    WITH coalesce(r.Type, r.type, r.perspective_type, 'DF') AS CType,
+         c1,
+         c2,
+         count(r) AS df_freq,
          avg(
              coalesce(
                  r.transitionTimeSeconds,
@@ -185,130 +110,207 @@ def fetch_activity_dfg(
                  END
              )
          ) AS avg_transition_seconds
-    WHERE frequency >= $min_frequency
-    RETURN from_activity, to_activity, df_perspective_type, frequency, avg_transition_seconds
-    ORDER BY frequency DESC, df_perspective_type, from_activity, to_activity
-    LIMIT $edge_limit
+    MERGE (c1)-[dfc:DF_C {Type: CType}]->(c2)
+    SET dfc.edge_weight = df_freq,
+        dfc.avg_transition_seconds = avg_transition_seconds
+    RETURN count(dfc) AS dfc_count
+    """
+
+def set_class_weight_query() -> str:
+    return """
+    MATCH (:Event)-[obs:OBS]->(c:Class)
+    WITH c, count(obs) AS weight
+    SET c.Count = weight
+    RETURN count(c) AS weighted_classes
+    """
+
+
+def delete_class_graph_query() -> str:
+    return "MATCH (c:Class) DETACH DELETE c"
+
+
+def materialize_aggregation(
+    driver: Any,
+    database: Optional[str],
+    mission_choice: str,
+    robot_choice: str,
+    segment_choice: str,
+) -> Dict[str, int]:
+    with driver.session(**neo4j_shared.session_kwargs(database)) as session:
+        session.run(delete_class_graph_query()).consume()
+        agg_function = create_class_query(mission_choice, robot_choice, segment_choice)
+        class_record = session.run(agg_function).single()
+        print(f"Aggregation function: {agg_function}")
+        dfc_record = session.run(class_df_aggregation_query()).single()
+        weight_record = session.run(set_class_weight_query()).single()
+
+    return {
+        "classes": int(class_record["class_count"] if class_record else 0),
+        "observed_events": int(
+            class_record["observed_events"] if class_record else 0
+        ),
+        "dfc_edges": int(dfc_record["dfc_count"] if dfc_record else 0),
+        "weighted_classes": int(
+            weight_record["weighted_classes"] if weight_record else 0
+        ),
+    }
+
+
+def fetch_class_graph(
+    driver: Any,
+    database: Optional[str],
+    min_frequency: int,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    query = """
+    MATCH (c1:Class)-[r:DF_C]->(c2:Class)
+    WHERE r.edge_weight >= $min_frequency
+    RETURN c1.Event_Id AS source_id,
+           c1.activity AS source_activity,
+           properties(c1) AS source_details,
+           c1.Count AS source_count,
+           c2.Event_Id AS target_id,
+           c2.activity AS target_activity,
+           properties(c2) AS target_details,
+           c2.Count AS target_count,
+           r.Type AS perspective,
+           r.edge_weight AS frequency,
+           r.avg_transition_seconds AS avg_transition_seconds
+    ORDER BY frequency DESC, source_activity, target_activity
+    LIMIT $limit
     """
     with driver.session(**neo4j_shared.session_kwargs(database)) as session:
-        return [
-            {
-                "from_activity": record["from_activity"],
-                "to_activity": record["to_activity"],
-                "df_perspective_type": record["df_perspective_type"],
-                "frequency": record["frequency"],
-                "avg_transition_seconds": record["avg_transition_seconds"],
-            }
-            for record in session.run(
-                query,
-                log_name=log_name,
-                perspective_type=perspective_type,
-                perspective_id=perspective_id,
-                min_frequency=min_frequency,
-                edge_limit=edge_limit,
-                no_perspective=NO_PERSPECTIVE,
-            )
-        ]
+        return [dict(record) for record in session.run(
+            query,
+            min_frequency=min_frequency,
+            limit=limit,
+        )]
 
 
-def build_activity_dfg_graphviz(
+
+def _tooltip(details: Dict[str, Any], count: int) -> str:
+    ordered = sorted((str(key), value) for key, value in (details or {}).items())
+    lines = [f"{key}: {value}" for key, value in ordered]
+    if not any(key == "Count" for key, _ in ordered):
+        lines.append(f"Count: {count}")
+    return "\n".join(lines)
+
+
+def _perspective_colors(rows: List[Dict[str, Any]]) -> Dict[str, str]:
+    perspectives = sorted({str(row.get("perspective") or "DF") for row in rows})
+    return {
+        perspective: PERSPECTIVE_COLORS[index % len(PERSPECTIVE_COLORS)]
+        for index, perspective in enumerate(perspectives)
+    }
+
+
+def build_graphviz(
     rows: List[Dict[str, Any]],
-    show_avg_transition: bool,
-    thickness_metric: str,
+    show_time: bool,
+    color_by_perspective: Dict[str, str],
 ) -> str:
     try:
         import graphviz
     except ImportError as exc:
-        raise ImportError("Install the `graphviz` Python package to render the process view.") from exc
+        raise ImportError(
+            "Install the `graphviz` Python package and the Graphviz executable."
+        ) from exc
 
-    dot = graphviz.Digraph("activity_dfg", graph_attr={"rankdir": "LR", "bgcolor": "white"})
+    dot = graphviz.Digraph(
+        "aggregated_ekg",
+        graph_attr={"rankdir": "LR", "bgcolor": "white", "overlap": "false"},
+    )
     dot.attr(
         "node",
-        style="filled",
-        fontname="Helvetica",
-        penwidth="1.2",
         shape="box",
-        fillcolor=ACTIVITY_COLOR,
+        style="rounded,filled",
+        fillcolor=CLASS_COLOR,
+        fontname="Helvetica",
     )
-    dot.attr("edge", fontname="Helvetica", color="#4A4A4A", arrowsize="0.8")
+    dot.attr("edge", fontname="Helvetica", arrowsize="0.8")
 
-    activities = sorted({row["from_activity"] for row in rows} | {row["to_activity"] for row in rows})
-    for activity in activities:
-        dot.node(str(activity), label=str(activity), tooltip=f"Activity: {activity}")
-
-    perspective_types = [str(row["df_perspective_type"]) for row in rows]
-    color_by_perspective = perspective_color_map(perspective_types)
-    metric_values = [
-        float(row[thickness_metric])
-        for row in rows
-        if row.get(thickness_metric) is not None
-    ] if thickness_metric != "none" else []
-    minimum = min(metric_values) if metric_values else 0.0
-    maximum = max(metric_values) if metric_values else 0.0
-
+    nodes: Dict[str, Dict[str, Any]] = {}
     for row in rows:
-        label = f"n={row['frequency']}"
-        if show_avg_transition:
-            label += f"\navg={format_seconds(row.get('avg_transition_seconds'))}"
-        perspective_type = str(row["df_perspective_type"])
-        metric_value = None if thickness_metric == "none" else row.get(thickness_metric)
-        dot.edge(
-            str(row["from_activity"]),
-            str(row["to_activity"]),
-            label=label,
-            color=color_by_perspective.get(perspective_type, "#4A4A4A"),
-            fontcolor=color_by_perspective.get(perspective_type, "#4A4A4A"),
-            penwidth=scaled_penwidth(metric_value, minimum, maximum),
-            tooltip=(
-                f"{row['from_activity']} -> {row['to_activity']}\n"
-                f"perspective: {perspective_type}\n"
-                f"frequency: {row['frequency']}\n"
-                f"avg transition: {format_seconds(row.get('avg_transition_seconds'))}"
-            ),
+        nodes[str(row["source_id"])] = {
+            "activity": str(row.get("source_activity") or "n/a"),
+            "details": dict(row.get("source_details") or {}),
+            "count": int(row.get("source_count") or 0),
+        }
+        nodes[str(row["target_id"])] = {
+            "activity": str(row.get("target_activity") or "n/a"),
+            "details": dict(row.get("target_details") or {}),
+            "count": int(row.get("target_count") or 0),
+        }
+
+    for node_id, node in nodes.items():
+        dot.node(
+            node_id,
+            label=node["activity"],
+            tooltip=_tooltip(node["details"], node["count"]),
         )
 
-    with dot.subgraph(name="cluster_legend") as legend:
-        legend.attr(label="Perspective colors", color="#DDDDDD", fontsize="10")
-        legend.attr("node", shape="plaintext", style="", fontname="Helvetica")
-        for perspective_type, color in color_by_perspective.items():
-            legend.node(
-                f"legend_{perspective_type}",
-                label=f'<<TABLE BORDER="0" CELLBORDER="0" CELLPADDING="2"><TR><TD><FONT COLOR="{color}">■</FONT></TD><TD>{perspective_type}</TD></TR></TABLE>>',
-            )
+    for row in rows:
+        perspective = str(row.get("perspective") or "DF")
+        color = color_by_perspective.get(perspective, "#4A4A4A")
+        label = f"{perspective} | n={row['frequency']}"
+        if show_time and row.get("avg_transition_seconds") is not None:
+            label += f"\navg={float(row['avg_transition_seconds']):.2f}s"
+        dot.edge(
+            str(row["source_id"]),
+            str(row["target_id"]),
+            label=label,
+            color=color,
+            fontcolor=color,
+            penwidth=str(1.0 + min(float(row["frequency"]), 20.0) / 4.0),
+            tooltip=(
+                f"Perspective: {perspective}\n"
+                f"Frequency: {row['frequency']}\n"
+                f"Average transition: {row.get('avg_transition_seconds')} seconds"
+            ),
+        )
 
     return dot.source
 
 
-def render_activity_summary(rows: List[Dict[str, Any]]) -> None:
-    activities = {row["from_activity"] for row in rows} | {row["to_activity"] for row in rows}
-    total_frequency = sum(int(row["frequency"]) for row in rows)
-    perspectives = sorted({str(row["df_perspective_type"]) for row in rows})
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Activities shown", len(activities))
-    with c2:
-        st.metric("DFG edges shown", len(rows))
-    with c3:
-        st.metric("Total DF frequency", total_frequency)
-    st.caption("Perspectives shown: " + ", ".join(perspectives))
+def render_perspective_legend(color_by_perspective: Dict[str, str]) -> None:
+    """Render a compact perspective legend outside the Graphviz canvas."""
+    if not color_by_perspective:
+        return
+
+    chips = []
+    for perspective, color in color_by_perspective.items():
+        chips.append(
+            '<span style="display:inline-flex;align-items:center;gap:0.4rem;'
+            'padding:0.25rem 0.55rem;margin:0.15rem 0.25rem 0.15rem 0;'
+            'border:1px solid #dddddd;border-radius:999px;background:#ffffff;'
+            'font-size:0.88rem;">'
+            f'<span style="width:0.8rem;height:0.22rem;background:{color};'
+            'display:inline-block;border-radius:2px;"></span>'
+            f'{perspective}</span>'
+        )
+
+    st.markdown(
+        '<div style="margin:0.25rem 0 0.8rem 0;">' + ''.join(chips) + '</div>',
+        unsafe_allow_html=True,
+    )
 
 
-def clear_visualizer_state() -> None:
+def clear_state() -> None:
     for key in (
-        "viz_connected",
-        "viz_connection_error",
-        "viz_schema",
-        "viz_last_graph",
+        "agg_connected",
+        "agg_error",
+        "agg_rows",
+        "agg_result",
     ):
         st.session_state.pop(key, None)
 
 
 def render_page() -> None:
-    st.title("EKG Process View Visualizer")
+    st.title("Personalized EKG Aggregation")
     st.write(
-        "Visualize the process-oriented activity directly-follows graph induced by "
-        "Neo4j `(:Event)-[:DF]->(:Event)` relations. The graph aggregates concrete "
-        "event-level DF edges by activity."
+        "Choose the Mission, Robot, and Segment granularity. The application "
+        "creates `:Class` nodes, `:OBS` relationships, and aggregated "
+        "`:DF_C` relationships."
     )
 
     neo4j_shared.render_connection_summary()
@@ -317,179 +319,167 @@ def render_page() -> None:
     user = connection["user"]
     password = connection["password"]
     database = connection["database"]
-    c1, c2 = st.columns(2)
-    with c1:
-        connect_clicked = st.button("Connect", key="viz_connect_button")
-    with c2:
-        reset_clicked = st.button("Reset", key="viz_reset_button")
+
+    connect_col, reset_col = st.columns(2)
+    with connect_col:
+        connect_clicked = st.button("Connect")
+    with reset_col:
+        reset_clicked = st.button("Reset")
 
     if reset_clicked:
-        clear_visualizer_state()
+        clear_state()
 
     if connect_clicked:
         driver, error = neo4j_shared.get_neo4j_driver(uri, user, password)
         if driver is None:
-            st.session_state["viz_connected"] = False
-            st.session_state["viz_connection_error"] = error
+            st.session_state["agg_connected"] = False
+            st.session_state["agg_error"] = error
         else:
-            try:
-                st.session_state["viz_connected"] = True
-                st.session_state["viz_connection_error"] = None
-                st.session_state["viz_schema"] = fetch_schema(driver, database)
-            except Exception as exc:  # noqa: BLE001
-                st.session_state["viz_connected"] = False
-                st.session_state["viz_connection_error"] = f"Could not inspect the graph schema: {exc}"
-            finally:
-                driver.close()
-
-    if not st.session_state.get("viz_connected", False):
-        error = st.session_state.get("viz_connection_error")
-        if error:
-            st.warning(error)
-        st.info("Insert Neo4j credentials and press `Connect` to load graph filters.")
-        return
-
-    schema = st.session_state.get("viz_schema", {})
-
-    with st.expander("Schema overview", expanded=False):
-        st.json(
-            {
-                "labels": schema.get("labels", []),
-                "relationship_types": schema.get("relationship_types", []),
-                "df_properties": schema.get("df_property_keys", []),
-                "df_perspectives": schema.get("df_perspectives", {}),
-            }
-        )
-
-    logs = schema.get("logs", [])
-    log_options = [ALL_OPTION] + logs
-    selected_log = st.selectbox("Log filter", log_options, index=0)
-    log_name = None if selected_log == ALL_OPTION else selected_log
-
-    driver, error = neo4j_shared.get_neo4j_driver(uri, user, password)
-    if driver is not None:
-        try:
-            counts = fetch_counts(driver, database, log_name)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Events", counts.get("events", 0))
-            c2.metric("DF edges", counts.get("df_edges", 0))
-            c3.metric("Nodes", counts.get("nodes", 0))
-        finally:
+            st.session_state["agg_connected"] = True
+            st.session_state["agg_error"] = None
             driver.close()
 
-    if "DF" not in schema.get("relationship_types", []):
-        st.warning(
-            "No `DF` relationships were found. The process-oriented view is built from "
-            "`(:Event)-[:DF]->(:Event)` edges, so derive/load DF edges first."
-        )
+    if not st.session_state.get("agg_connected", False):
+        if st.session_state.get("agg_error"):
+            st.error(st.session_state["agg_error"])
+        st.info("Insert the Neo4j connection settings and press Connect.")
         return
 
-    perspective_options = schema.get("df_perspectives", {})
-    perspective_types = [ALL_OPTION] + list(perspective_options.keys())
-
-    st.subheader("Filters")
-    c1, c2, c3, c4 = st.columns(4)
+    st.subheader("Aggregation")
+    c1, c2, c3 = st.columns(3)
     with c1:
-        selected_perspective_type = st.selectbox("DF perspective type", perspective_types, index=0)
-    with c2:
-        if selected_perspective_type == ALL_OPTION:
-            perspective_id_options = [ALL_OPTION]
-        else:
-            perspective_id_options = [ALL_OPTION] + perspective_options.get(selected_perspective_type, {}).get("ids", [])
-        selected_perspective_id = st.selectbox("DF perspective id", perspective_id_options, index=0)
-    with c3:
-        edge_limit = st.slider("Activity-edge limit", min_value=5, max_value=500, value=80, step=5)
-    with c4:
-        min_frequency = st.slider("Minimum frequency", min_value=1, max_value=50, value=1, step=1)
-
-    c5, c6 = st.columns(2)
-    with c5:
-        show_avg_transition = st.checkbox("Show average transition time", value=True)
-    with c6:
-        thickness_metric = st.selectbox(
-            "Edge thickness metric",
-            [
-                "none",
-                "frequency",
-                "avg_transition_seconds",
-            ],
-            index=1,
-            format_func=lambda value: {
-                "none": "Fixed width",
-                "frequency": "Frequency",
-                "avg_transition_seconds": "Performance / avg transition",
-            }[value],
+        mission_choice = st.radio(
+            "Mission",
+            ["Mission ID", "Mission type"],
+            horizontal=True,
         )
-    st.caption("Process-oriented view: activity DFG aggregated from `(:Event)-[:DF]->(:Event)` relations.")
+    with c2:
+        robot_choice = st.radio(
+            "Robot",
+            ["Robot ID", "Robot type"],
+            index=1,
+            horizontal=True,
+        )
+    with c3:
+        segment_choice = st.radio(
+            "Segment",
+            ["Segment ID", "Segment type"],
+            index=1,
+            horizontal=True,
+        )
 
-    perspective_type_param = None if selected_perspective_type == ALL_OPTION else selected_perspective_type
-    perspective_id_param = None if selected_perspective_id == ALL_OPTION else selected_perspective_id
+    st.caption(
+        "Example: Mission ID + Robot type + Segment type groups events by "
+        "`activity`, the correlated Mission node ID, Robot node type, and "
+        "Segment node type."
+    )
 
-    if st.button("Visualize process view", type="primary", key="visualize_process_view_button"):
+    if st.button("Create aggregated graph", type="primary"):
         driver, error = neo4j_shared.get_neo4j_driver(uri, user, password)
         if driver is None:
             st.error(error)
             return
         try:
-            rows = fetch_activity_dfg(
-                driver=driver,
-                database=database,
-                log_name=log_name,
-                perspective_type=perspective_type_param,
-                perspective_id=perspective_id_param,
-                min_frequency=min_frequency,
-                edge_limit=edge_limit,
+            st.session_state["agg_result"] = materialize_aggregation(
+                driver,
+                database,
+                mission_choice,
+                robot_choice,
+                segment_choice,
             )
-            if not rows:
-                st.info("No activity DFG edges matched the selected filters.")
-                return
-            dot_source = build_activity_dfg_graphviz(
-                rows,
-                show_avg_transition=show_avg_transition,
-                thickness_metric=thickness_metric,
-            )
-            st.session_state["viz_last_graph"] = {
-                "rows": rows,
-                "dot_source": dot_source,
-                "perspective_type": selected_perspective_type,
-                "perspective_id": selected_perspective_id,
-                "log": selected_log,
-                "thickness_metric": thickness_metric,
-            }
-        except ImportError as exc:
-            st.error(str(exc))
-            return
+            st.session_state.pop("agg_rows", None)
         except Exception as exc:  # noqa: BLE001
-            st.error(f"Could not load or render the process view from Neo4j: {exc}")
-            return
+            st.error(f"Could not create the aggregated graph: {exc}")
         finally:
             driver.close()
 
-    graph_payload = st.session_state.get("viz_last_graph")
-    if not graph_payload:
-        st.info("Press `Visualize process view` to render the activity DFG.")
-        return
+    result = st.session_state.get("agg_result")
+    if result:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Class nodes", result["classes"])
+        c2.metric("Observed events", result["observed_events"])
+        c3.metric("DF_C edges", result["dfc_edges"])
 
-    subtitle = "Process-oriented activity DFG"
-    if graph_payload.get("log") and graph_payload.get("log") != ALL_OPTION:
-        subtitle += f" | Log: {graph_payload.get('log')}"
-    if graph_payload.get("perspective_type") and graph_payload.get("perspective_type") != ALL_OPTION:
-        subtitle += f" | Perspective: {graph_payload.get('perspective_type')}"
-    if graph_payload.get("perspective_id") and graph_payload.get("perspective_id") != ALL_OPTION:
-        subtitle += f" / {graph_payload.get('perspective_id')}"
-    if graph_payload.get("thickness_metric") and graph_payload.get("thickness_metric") != "none":
-        subtitle += f" | Edge thickness: {graph_payload.get('thickness_metric')}"
-    st.caption(subtitle)
+    st.subheader("Class DFG")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        min_frequency = st.slider("Minimum frequency", 1, 100, 1)
+    with c2:
+        edge_limit = st.slider("Edge limit", 10, 500, 100, step=10)
+    with c3:
+        show_time = st.checkbox("Show average transition time", value=True)
 
-    render_activity_summary(graph_payload["rows"])
-    st.graphviz_chart(graph_payload["dot_source"], width="stretch")
+    if st.button("Visualize class graph"):
+        driver, error = neo4j_shared.get_neo4j_driver(uri, user, password)
+        if driver is None:
+            st.error(error)
+            return
+        try:
+            st.session_state["agg_rows"] = fetch_class_graph(
+                driver,
+                database,
+                min_frequency,
+                edge_limit,
+            )
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Could not load the class graph: {exc}")
+        finally:
+            driver.close()
 
-    with st.expander("Activity DFG edge details", expanded=False):
-        st.dataframe(graph_payload["rows"], width="stretch")
+    rows = st.session_state.get("agg_rows", [])
+    if rows:
+        perspectives = sorted(
+            {str(row.get("perspective") or "DF") for row in rows}
+        )
+        selected_perspectives = st.multiselect(
+            "Visible perspectives",
+            options=perspectives,
+            default=perspectives,
+            help="Hide or show DF_C edges by perspective without changing Neo4j.",
+        )
+
+        filtered_rows = [
+            row
+            for row in rows
+            if str(row.get("perspective") or "DF") in selected_perspectives
+        ]
+        color_by_perspective = _perspective_colors(rows)
+        visible_colors = {
+            perspective: color_by_perspective[perspective]
+            for perspective in selected_perspectives
+            if perspective in color_by_perspective
+        }
+
+        st.caption(
+            f"Showing {len(filtered_rows)} of {len(rows)} edges across "
+            f"{len(selected_perspectives)} perspective(s)."
+        )
+        render_perspective_legend(visible_colors)
+
+        if filtered_rows:
+            st.graphviz_chart(
+                build_graphviz(
+                    filtered_rows,
+                    show_time,
+                    color_by_perspective,
+                ),
+                width="stretch",
+            )
+        else:
+            st.info("Select at least one perspective to display its edges.")
+
+        with st.expander("DF_C details"):
+            st.dataframe(filtered_rows, width="stretch")
+    else:
+        st.info("Create the aggregation, then press Visualize class graph.")
 
 
 def main() -> None:
-    st.set_page_config(page_title="EKG Process View Visualizer", page_icon="🕸️", layout="wide")
+    st.set_page_config(
+        page_title="Personalized EKG Aggregation",
+        page_icon="🕸️",
+        layout="wide",
+    )
     render_page()
 
 
