@@ -29,6 +29,7 @@ import neo4j_shared
 SUPPORTED_EXTENSIONS = {"csv", "xls", "xlsx"}
 NONE_OPTION = "-- none --"
 TYPE_OPTIONS = ["String", "Integer", "Float", "Boolean", "Datetime"]
+APP_DIR = Path(__file__).resolve().parent
 ENTITY_SPECS = {
     "Robot": "Robot entity column",
     "Mission": "Mission entity column",
@@ -49,6 +50,13 @@ def clean_file_name(file_name: str) -> str:
     cleaned = file_name.replace(" ", "_")
     cleaned = "".join(ch for ch in cleaned if ch.isalnum() or ch in {"_", "-", "."})
     return cleaned or "uploaded_file"
+
+
+def resolve_app_path(path_like: str | Path) -> Path:
+    path = Path(path_like).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    return (APP_DIR / path).resolve()
 
 
 def save_upload(uploaded_file: Any, upload_dir: Path, prefix: str) -> str:
@@ -90,6 +98,79 @@ def uniquify_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out.columns = cols
     return out
+
+
+def normalize_loader_config_paths(config: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = json.loads(json.dumps(config))
+
+    events = normalized.get("events", {})
+    if isinstance(events, dict) and events.get("path"):
+        events["path"] = str(resolve_app_path(events["path"]))
+
+    entities = normalized.get("entities", {})
+    if isinstance(entities, dict):
+        for entity in entities.values():
+            if isinstance(entity, dict) and entity.get("path"):
+                entity["path"] = str(resolve_app_path(entity["path"]))
+
+    task_capabilities = normalized.get("task_capabilities", {})
+    if isinstance(task_capabilities, dict) and task_capabilities.get("path"):
+        task_capabilities["path"] = str(resolve_app_path(task_capabilities["path"]))
+
+    return normalized
+
+
+def validate_config_paths(config: Dict[str, Any]) -> List[str]:
+    missing: List[str] = []
+    candidate_paths = []
+
+    events = config.get("events", {})
+    if isinstance(events, dict) and events.get("path"):
+        candidate_paths.append(("events", events["path"]))
+
+    entities = config.get("entities", {})
+    if isinstance(entities, dict):
+        for entity_key, entity in entities.items():
+            if isinstance(entity, dict) and entity.get("path"):
+                candidate_paths.append((f"entities.{entity_key}", entity["path"]))
+
+    task_capabilities = config.get("task_capabilities", {})
+    if isinstance(task_capabilities, dict) and task_capabilities.get("path"):
+        candidate_paths.append(("task_capabilities", task_capabilities["path"]))
+
+    for label, path_str in candidate_paths:
+        if not Path(path_str).exists():
+            missing.append(f"{label}: {path_str}")
+    return missing
+
+
+def upload_loader_config() -> Optional[Dict[str, Any]]:
+    uploaded = st.file_uploader(
+        "Optional loader config JSON",
+        type=["json"],
+        key="loader_config_json_file",
+        help="Upload a previously downloaded loader configuration to reuse it directly.",
+    )
+    if uploaded is None:
+        return None
+
+    try:
+        raw = json.load(uploaded)
+        config = normalize_loader_config_paths(raw)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Could not read loader config JSON: {exc}")
+        return None
+
+    st.success("Loader config JSON loaded.")
+    missing_paths = validate_config_paths(config)
+    if missing_paths:
+        st.warning("Some configured files do not exist at the resolved absolute paths:")
+        for item in missing_paths:
+            st.caption(item)
+    else:
+        st.caption("All configured paths were resolved successfully.")
+
+    return config
 
 
 # -----------------------------------------------------------------------------
@@ -590,9 +671,16 @@ def render_page() -> None:
     with st.sidebar:
         st.header("Settings")
         log_name = st.text_input("Log name", value="log_1")
-        upload_dir = Path(
-            st.text_input("Upload storage directory", value=".uploaded_inputs")
-        ).expanduser()
+        upload_dir = resolve_app_path(st.text_input("Upload storage directory", value="ekg_uploaded_inputs"))
+        st.caption(f"App directory: `{APP_DIR}`")
+        st.caption(f"Resolved upload directory: `{upload_dir}`")
+
+    imported_config = upload_loader_config()
+    if imported_config is not None:
+        st.info("Using the uploaded loader configuration. Manual upload/mapping steps are skipped.")
+        render_config(imported_config)
+        render_ekg_creation(imported_config)
+        return
 
     uploaded_event = upload_event_log(upload_dir)
     if uploaded_event is None:
@@ -627,6 +715,7 @@ def render_page() -> None:
         entities=entities,
         task_capabilities=task_capabilities,
     )
+    config = normalize_loader_config_paths(config)
     render_config(config)
     render_ekg_creation(config)
 

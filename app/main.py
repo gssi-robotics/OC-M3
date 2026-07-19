@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-import collaboration_dashboard
+import collaboration_dashboard as collaboration_dashboard
 import ekg_visualizer
 import log_import
 import neo4j_shared
