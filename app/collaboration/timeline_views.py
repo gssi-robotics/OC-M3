@@ -572,23 +572,50 @@ def render_robot_activity_lanes_over_missions_plotly(
         for events in mission_events_by_id.values()
         for event in events
     })
+    all_segments = sorted({
+        str(event.get("segment_id") or "mission-level")
+        for events in mission_events_by_id.values()
+        for event in events
+    })
     activity_colors = segment_color_map(all_activities)
+    segment_colors = segment_color_map(all_segments)
 
-    # Build y lanes as Mission / Robot. Reversing the final labels gives a
-    # natural top-to-bottom order in Plotly.
-    lane_labels: List[str] = []
+    # Build y lanes grouped by mission, with visible gaps between missions so
+    # each mission reads like a compact subplot rather than one continuous axis.
     lane_keys: List[Tuple[str, str]] = []
+    mission_group_bounds: List[Dict[str, Any]] = []
     for mission_id in mission_ids:
         robots = sorted({str(event.get("robot_id") or "unassigned") for event in mission_events_by_id.get(mission_id, [])})
         if not robots:
             robots = ["unassigned"]
+        start_index = len(lane_keys)
         for robot_id in robots:
             lane_keys.append((str(mission_id), robot_id))
-            lane_labels.append(f"M {mission_id} / R {robot_id}")
+        end_index = len(lane_keys) - 1
+        mission_group_bounds.append({"mission_id": str(mission_id), "start_index": start_index, "end_index": end_index})
 
-    y_map = {key: index for index, key in enumerate(reversed(lane_keys))}
+    group_gap = 1.45
+    y_map: Dict[Tuple[str, str], float] = {}
+    mission_group_geometry: List[Dict[str, Any]] = []
+    next_y = 0.0
+    for mission_group in reversed(mission_group_bounds):
+        mission_lane_keys = lane_keys[mission_group["start_index"]: mission_group["end_index"] + 1]
+        group_positions: List[float] = []
+        for lane_key in reversed(mission_lane_keys):
+            y_map[lane_key] = next_y
+            group_positions.append(next_y)
+            next_y += 1.0
+        group_positions = list(reversed(group_positions))
+        mission_group_geometry.append({
+            "mission_id": mission_group["mission_id"],
+            "top_y": max(group_positions) if group_positions else next_y,
+            "bottom_y": min(group_positions) if group_positions else next_y,
+        })
+        next_y += group_gap
+
+    mission_group_geometry = list(reversed(mission_group_geometry))
     y_tickvals = [y_map[key] for key in lane_keys]
-    y_ticktext = [f"M {mission_id} / R {robot_id}" for mission_id, robot_id in lane_keys]
+    y_ticktext = [robot_id for _, robot_id in lane_keys]
 
     fig = go.Figure()
 
@@ -607,6 +634,8 @@ def render_robot_activity_lanes_over_missions_plotly(
         ys: List[int] = []
         customdata: List[List[str]] = []
         texts: List[str] = []
+        fill_colors: List[str] = []
+        border_colors: List[str] = []
         for mission_id, raw_events in mission_events_by_id.items():
             for event in raw_events:
                 if str(event.get("robot_id") or "unassigned") != robot_id:
@@ -623,6 +652,9 @@ def render_robot_activity_lanes_over_missions_plotly(
                 bases.append(start_s)
                 ys.append(y_map[lane_key])
                 activity = str(event.get("activity") or event.get("event_id") or "event")
+                segment_id = str(event.get("segment_id") or "mission-level")
+                fill_colors.append(activity_colors.get(activity, "#94A3B8"))
+                border_colors.append(segment_colors.get(segment_id, "#0F172A"))
                 texts.append(activity[:18])
                 customdata.append([
                     _hover_html(
@@ -649,16 +681,9 @@ def render_robot_activity_lanes_over_missions_plotly(
                 orientation="h",
                 width=0.58,
                 marker=dict(
-                    color=[
-                        activity_colors.get(str(event.get("activity") or event.get("event_id") or "event"), "#94A3B8")
-                        for mission_id, raw_events in mission_events_by_id.items()
-                        for event in raw_events
-                        if str(event.get("robot_id") or "unassigned") == robot_id
-                        and isinstance(event.get("start_ms"), (int, float))
-                        and isinstance(event.get("end_ms"), (int, float))
-                    ],
+                    color=fill_colors,
                     opacity=0.82,
-                    line=dict(color="#0F172A", width=0.35),
+                    line=dict(color=border_colors, width=2.0),
                 ),
                 text=texts,
                 textposition="inside",
@@ -682,14 +707,60 @@ def render_robot_activity_lanes_over_missions_plotly(
             showlegend=True,
         ))
 
+    # Mission subtitles and separators to visually group robot lanes.
+    separator_shapes: List[Dict[str, Any]] = []
+    mission_annotations: List[Dict[str, Any]] = []
+    for index, mission_group in enumerate(mission_group_geometry):
+        top_y = mission_group["top_y"]
+        bottom_y = mission_group["bottom_y"]
+        mission_annotations.append(
+            dict(
+                x=-0.055,
+                y=top_y + 0.72,
+                xref="paper",
+                yref="y",
+                xanchor="left",
+                align="left",
+                text=f"<b>Mission {mission_group['mission_id']}</b>",
+                showarrow=False,
+                font=dict(size=11, color="#0F172A"),
+                bgcolor="rgba(255,255,255,0.96)",
+                bordercolor="rgba(148,163,184,0.55)",
+                borderwidth=1,
+                borderpad=5,
+            )
+        )
+        if index < len(mission_group_geometry) - 1:
+            next_group = mission_group_geometry[index + 1]
+            separator_y = (bottom_y + next_group["top_y"]) / 2
+            separator_shapes.append(
+                dict(
+                    type="line",
+                    xref="paper",
+                    yref="y",
+                    x0=-0.01,
+                    x1=1,
+                    y0=separator_y,
+                    y1=separator_y,
+                    line=dict(color="rgba(100,116,139,0.55)", width=1.6, dash="dash"),
+                    layer="below",
+                )
+            )
+
     fig.update_layout(
-        title="Robot activity over missions: concurrency-visible event lanes",
+        title=dict(
+            text="Robot Activity Lanes Across Missions"
+            "<br><sup>Each mission is grouped as a separate lane block; fills encode activity and borders encode fragment membership.</sup>",
+            x=0.02,
+            xanchor="left",
+            y=0.98,
+        ),
         barmode="overlay",
         dragmode="pan",
         height=max(420, min(1800, 120 + 42 * len(lane_keys))) if large_view else max(360, min(1200, 105 + 34 * len(lane_keys))),
-        margin=dict(l=165, r=40, t=60, b=70),
+        margin=dict(l=255, r=40, t=88, b=68),
         xaxis=dict(
-            title="Global relative time from first selected event",
+            title="Relative mission time from first selected event",
             range=list(x_range),
             tickmode="array",
             tickvals=tickvals,
@@ -699,16 +770,26 @@ def render_robot_activity_lanes_over_missions_plotly(
             zeroline=False,
         ),
         yaxis=dict(
-            title="Mission / Robot",
+            title="Robot",
             tickmode="array",
             tickvals=y_tickvals,
             ticktext=y_ticktext,
             showgrid=True,
             gridcolor="rgba(148,163,184,0.14)",
+            automargin=True,
         ),
         hovermode="closest",
         template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.01,
+            xanchor="left",
+            x=0.02,
+            title="Activity",
+        ),
+        annotations=mission_annotations,
+        shapes=separator_shapes,
     )
     return fig
 
