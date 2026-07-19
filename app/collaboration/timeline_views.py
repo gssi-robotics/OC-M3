@@ -561,13 +561,18 @@ def render_robot_activity_lanes_over_missions_plotly(
     x_range = _overview_x_range(mission_events_by_id)
     tickvals, ticktext = _relative_time_ticks(x_range)
 
-    # Stable robot colors across all missions.
+    # Stable activity colors across all missions.
     all_robot_ids = sorted({
         str(event.get("robot_id") or "unassigned")
         for events in mission_events_by_id.values()
         for event in events
     })
-    robot_colors = segment_color_map(all_robot_ids)
+    all_activities = sorted({
+        str(event.get("activity") or event.get("event_id") or "event")
+        for events in mission_events_by_id.values()
+        for event in events
+    })
+    activity_colors = segment_color_map(all_activities)
 
     # Build y lanes as Mission / Robot. Reversing the final labels gives a
     # natural top-to-bottom order in Plotly.
@@ -644,7 +649,14 @@ def render_robot_activity_lanes_over_missions_plotly(
                 orientation="h",
                 width=0.58,
                 marker=dict(
-                    color=robot_colors.get(robot_id, "#94A3B8"),
+                    color=[
+                        activity_colors.get(str(event.get("activity") or event.get("event_id") or "event"), "#94A3B8")
+                        for mission_id, raw_events in mission_events_by_id.items()
+                        for event in raw_events
+                        if str(event.get("robot_id") or "unassigned") == robot_id
+                        and isinstance(event.get("start_ms"), (int, float))
+                        and isinstance(event.get("end_ms"), (int, float))
+                    ],
                     opacity=0.82,
                     line=dict(color="#0F172A", width=0.35),
                 ),
@@ -654,7 +666,21 @@ def render_robot_activity_lanes_over_missions_plotly(
                 textfont=dict(size=9, color="white"),
                 customdata=customdata,
                 hovertemplate="%{customdata[0]}<extra></extra>",
+                showlegend=False,
             ))
+
+    # Activity legend traces.
+    for activity in all_activities:
+        fig.add_trace(go.Bar(
+            name=activity[:28],
+            x=[0],
+            y=[y_tickvals[0] if y_tickvals else 0],
+            orientation="h",
+            marker=dict(color=activity_colors.get(activity, "#94A3B8")),
+            visible="legendonly",
+            hoverinfo="skip",
+            showlegend=True,
+        ))
 
     fig.update_layout(
         title="Robot activity over missions: concurrency-visible event lanes",
