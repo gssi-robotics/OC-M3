@@ -31,7 +31,7 @@ class Schema:
     event_end_prop: str = "end"
 
     df_perspective_id_prop: str = "perspective_id"
-    df_perspective_type_prop: str = "perspective_type"
+    df_perspective_type_prop: str = "type"
     df_transition_prop: str = "transitionTimeSeconds"
 
     def node(self, var: str, label: Optional[str]) -> str:
@@ -167,15 +167,24 @@ class CollaborationPatternCypher:
         transition_back = s.df_transition_expr("df_jk", "e_j", "e_k")
         intermediate_duration = s.seconds_between(f"e_j.{s.event_start_prop}", f"e_j.{s.event_end_prop}")
         return_time = f"transitionToIntermediate + intermediateDuration + transitionBack"
+        same_segment_match = ""
+        same_segment_where = ""
+        if objective_type == "Mission":
+            same_segment_match = f"""
+                MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('seg')}<-{s.rel(s.corr_rel)}-{s.event('e_j')}
+                MATCH {s.event('e_k')}-{s.rel(s.corr_rel)}->(seg)
+            """
+            same_segment_where = f" AND {s.type_filter('seg', 'Segment')}"
         return f"""
                 MATCH {s.event('e_i')}-{s.rel(s.df_rel, 'df_ij')}->{s.event('e_j')}-{s.rel(s.df_rel, 'df_jk')}->{s.event('e_k')}
                 MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('o')}<-{s.rel(s.corr_rel)}-{s.event('e_j')}
                 MATCH {s.event('e_k')}-{s.rel(s.corr_rel)}->(o)
+                {same_segment_match}
                 MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('ro_a')}<-{s.rel(s.corr_rel)}-{s.event('e_k')}
                 MATCH {s.event('e_j')}-{s.rel(s.corr_rel)}->{s.entity('ro_b')}
                 MATCH {s.event('e_j')}-{s.rel(s.req_rel)}->{s.capability('c')}<-{s.rel(s.has_rel)}-{s.entity('ro_b')}
                 WHERE {s.type_filter('o', objective_type)} AND {s.type_filter('ro_a', 'Robot')}
-                  AND {s.type_filter('ro_b', 'Robot')} AND {pred1} AND {pred2} AND ro_a <> ro_b
+                  AND {s.type_filter('ro_b', 'Robot')} AND {pred1} AND {pred2} AND ro_a <> ro_b{same_segment_where}
                   AND NOT (ro_a)-{s.rel(s.has_rel)}->(c)
                   AND NOT EXISTS {{
                     MATCH {s.event('e_j')}-{s.rel(s.req_rel)}->(c_req)

@@ -376,7 +376,7 @@ WHERE e1.event_id <> e2.event_id
       AND e1.end <= e3.start
       AND e3.end <= e2.start
   }}
-MERGE (e1)-[df:DF {{perspective_id: t.id, perspective_type: t.type}}]->(e2)
+MERGE (e1)-[df:DF {{perspective_id: t.id, type: t.type}}]->(e2)
 SET df.transitionTimeSeconds = duration.inSeconds(e1.end, e2.start).seconds
 SET df.transitionTime = duration.between(e1.end, e2.start)
 """.strip()

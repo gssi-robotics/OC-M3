@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-import collaboration_dashboard as collaboration_dashboard
+import collaboration_dashboard
+import collaboration_ekg_layer 
 import ekg_visualizer
 import log_import
 import neo4j_shared
@@ -15,7 +16,7 @@ def main() -> None:
         st.title("OC-M3")
         page = st.radio(
             "Module",
-            ["Load EKG", "Visualize EKG", "Collaboration Dashboard"],
+            ["Load EKG", "Aggregate EKG", "Collaboration Dashboard", "Collaboration EKG Layer"],
             index=0,
         )
         neo4j_shared.render_shared_connection_controls()
@@ -26,6 +27,10 @@ def main() -> None:
 
     if page == "Collaboration Dashboard":
         collaboration_dashboard.render_page()
+        return
+    
+    if page == "Collaboration EKG Layer":
+        collaboration_ekg_layer.render_page()
         return
 
     ekg_visualizer.render_page()

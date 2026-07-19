@@ -971,7 +971,7 @@ def render_object_centric_pairwise_tab(driver: Any, database: Optional[str], cat
 def fetch_activity_dfg(driver: Any, database: Optional[str], log_name: Optional[str], perspective: str, limit: int, min_frequency: int) -> List[Dict[str, Any]]:
     query = """
     MATCH (e1:Event)-[df:DF]->(e2:Event)
-    WHERE df.perspective_type = $perspective
+    WHERE coalesce(df.type, df.perspective_type) = $perspective
       AND ($log_name IS NULL OR e1.Log = $log_name OR e2.Log = $log_name)
     WITH
       coalesce(toString(e1.activity), toString(e1.event_id)) AS source,
