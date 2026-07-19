@@ -5,7 +5,7 @@
   "event_start": "start_time",
   "event_end": "end_time",
   "entity_id": "entity_id",
-  "entity_type_id": "type",
+  "entity_type_id": "Type",
   "events": {
     "path": "../replication-data/agriculture/capability_aware/event_table.csv",
     "attr": [
