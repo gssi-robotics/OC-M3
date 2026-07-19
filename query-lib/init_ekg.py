@@ -299,36 +299,38 @@ def load_req_query(config: Dict[str, Any]) -> str:
     cap_col = task_caps["capability_column"]
 
     return f"""
-LOAD CSV WITH HEADERS FROM {json.dumps(event_uri)} AS eventLine
-WITH eventLine
-WHERE {f'eventLine.{cypher_identifier(event_id_col)}'} IS NOT NULL
-  AND trim({f'eventLine.{cypher_identifier(event_id_col)}'}) <> ''
-LOAD CSV WITH HEADERS FROM {json.dumps(cap_uri)} AS capLine
-WITH eventLine, capLine
-WHERE capLine.{cypher_identifier(task_col)} = eventLine.{cypher_identifier(activity_col)}
-  AND capLine.{cypher_identifier(cap_col)} IS NOT NULL
-  AND trim(capLine.{cypher_identifier(cap_col)}) <> ''
-MATCH (e:Event {{event_id: eventLine.{cypher_identifier(event_id_col)}}})
-MERGE (c:Capability {{name: capLine.{cypher_identifier(cap_col)}}})
-SET c.Log = {json.dumps(log_name)}
-MERGE (e)-[:REQ]->(c)
-""".strip()
+        LOAD CSV WITH HEADERS FROM {json.dumps(event_uri)} AS eventLine
+        WITH eventLine
+        WHERE {f'eventLine.{cypher_identifier(event_id_col)}'} IS NOT NULL
+        AND trim({f'eventLine.{cypher_identifier(event_id_col)}'}) <> ''
+        LOAD CSV WITH HEADERS FROM {json.dumps(cap_uri)} AS capLine
+        WITH eventLine, capLine
+        WHERE capLine.{cypher_identifier(task_col)} = eventLine.{cypher_identifier(activity_col)}
+        AND capLine.{cypher_identifier(cap_col)} IS NOT NULL
+        AND trim(capLine.{cypher_identifier(cap_col)}) <> ''
+        MATCH (e:Event {{event_id: eventLine.{cypher_identifier(event_id_col)}}})
+        MERGE (c:Capability {{name: capLine.{cypher_identifier(cap_col)}}})
+        SET c.Log = {json.dumps(log_name)}
+        MERGE (e)-[:REQ]->(c)
+        """.strip()
 
 
 def infer_observed_has_query(config: Dict[str, Any]) -> str:
     """
-    Optional query: infer Robot-HAS-Capability from executed tasks.
-
-    If the project has an explicit robot-capability table, prefer loading HAS from
-    that table instead. This query creates observed capabilities only: a robot HAS
-    a capability if it executed an event requiring that capability.
+    Derive Robot-[:HAS]->Capability relations from the capability list
+    stored on Robot entity nodes.
     """
     return f"""
-MATCH (e:Event)-[:CORR]->(ro:Entity {{type: "Robot"}})
-MATCH (e)-[:REQ]->(c:Capability)
-MERGE (ro)-[h:HAS]->(c)
-SET h.source = "observed_execution"
-""".strip()
+            MATCH (ro:Entity {{type: "Robot"}})
+            WHERE ro.capabilities IS NOT NULL
+            UNWIND split(ro.capabilities, ";") AS raw_capability
+            WITH DISTINCT ro, trim(toString(raw_capability)) AS capability_name
+            WHERE capability_name <> ""
+            MERGE (c:Capability {{
+                name: capability_name,
+                Log: ro.Log}})
+            MERGE (ro)-[:HAS]->(c)
+            """.strip()
 
 
 def load_relationship_queries(config: Dict[str, Any]) -> List[Dict[str, str]]:
