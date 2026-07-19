@@ -1,0 +1,9 @@
+case_study,task_name,required_capability,base_duration,exclusive_zone
+agriculture,data_analysis,data_processing,10,False
+agriculture,drone_recheck,aerial_imaging,5,False
+agriculture,drone_scan,aerial_imaging,7,False
+agriculture,fertilizer_application,fertilizer,12,True
+agriculture,irrigation_adjustment,irrigation,9,True
+agriculture,pest_control_spray,spraying,11,True
+agriculture,soil_moisture_analysis,soil_sensing,6,True
+agriculture,soil_nutrient_test,soil_sensing,7,True
