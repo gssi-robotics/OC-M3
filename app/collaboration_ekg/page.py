@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 
@@ -10,16 +10,98 @@ from collaboration.collaboration_utils import format_seconds, table_safe_rows
 from .data import (
     OBJECTIVE_OPTIONS,
     PATTERN_OPTIONS,
+    aggregate_occurrence_rows,
     fetch_base_graph,
-    fetch_occurrences,
-    fetch_pattern_summary,
+    fetch_pattern_occurrence_rows,
+    filter_occurrences_for_aggregate,
 )
 from .visuals import build_occurrence_lane_graph, build_overview_graph
 
 
+HIDDEN_CLASS_PROPERTIES = {"Type", "Event_Id", "DisplayName", "Log", "sourceColumn"}
+
+
 def clear_state() -> None:
-    for key in ("cpi_connected", "cpi_error", "cpi_base", "cpi_summary", "cpi_occurrences"):
+    for key in (
+        "cpi_connected",
+        "cpi_error",
+        "cpi_base",
+        "cpi_summary",
+        "cpi_occurrence_rows",
+        "cpi_summary_signature",
+        "cpi_occurrence_index",
+        "cpi_selected_aggregate_key",
+    ):
         st.session_state.pop(key, None)
+
+
+def _summary_signature(pattern: str, objective_type: str, minimum_frequency: int) -> Dict[str, object]:
+    return {
+        "pattern": pattern,
+        "objective_type": objective_type,
+        "minimum_frequency": minimum_frequency,
+    }
+
+
+def _aggregate_key(row: Dict[str, object]) -> Tuple[str, str]:
+    return (
+        str(row["source_class_id"]),
+        str(row["target_class_id"]),
+    )
+
+
+def _aggregate_label(row: Dict[str, object]) -> str:
+    return (
+        f"{row['source_activity']} -> {row['target_activity']} | "
+        f"n={row['frequency']} | avg={format_seconds(row.get('avg_duration_seconds'))}"
+    )
+
+
+def _visible_class_items(details: Any, count: Any) -> List[Tuple[str, Any]]:
+    if not isinstance(details, dict):
+        return []
+    items: List[Tuple[str, Any]] = []
+    for key, value in details.items():
+        if key in HIDDEN_CLASS_PROPERTIES or key == "activity":
+            continue
+        items.append((str(key), value))
+    if count is not None:
+        items.append(("Count", count))
+    return items
+
+
+def _render_class_detail_panel(title: str, activity: Any, details: Any, count: Any) -> None:
+    st.markdown(f"**{title}**")
+    rows = [{"property": "activity", "value": activity}]
+    rows.extend({"property": key, "value": value} for key, value in _visible_class_items(details, count))
+    safe_rows = table_safe_rows(rows)
+    normalized_rows = [
+        {
+            "property": str(row.get("property", "")),
+            "value": "" if row.get("value") is None else str(row.get("value")),
+        }
+        for row in safe_rows
+    ]
+    st.dataframe(normalized_rows, width="stretch", hide_index=True)
+
+
+def _render_selected_aggregate_details(selected: Dict[str, object]) -> None:
+    st.caption(f"Selected aggregate: {_aggregate_label(selected)}")
+    c1, c2 = st.columns(2)
+    with c1:
+        _render_class_detail_panel(
+            "Source class",
+            selected.get("source_activity"),
+            selected.get("source_details"),
+            selected.get("source_count"),
+        )
+    with c2:
+        _render_class_detail_panel(
+            "Target class",
+            selected.get("target_activity"),
+            selected.get("target_details"),
+            selected.get("target_count"),
+        )
 
 
 def _render_connection_gate() -> Optional[Dict[str, str]]:
@@ -98,24 +180,50 @@ def _render_pattern_selection(connection: Dict[str, str]) -> Optional[Dict[str, 
         pattern_min = st.slider("Minimum pattern frequency", 1, 100, 1, key="cpi_pattern_min")
 
     if st.button("Find pattern aggregates", type="primary", key="cpi_find_pattern_aggregates"):
-        driver, error = neo4j_shared.get_neo4j_driver(connection["uri"], connection["user"], connection["password"])
+        driver, error = neo4j_shared.get_neo4j_driver(
+            connection["uri"],
+            connection["user"],
+            connection["password"],
+        )
         if driver is None:
             st.error(error)
             return None
+
         try:
-            st.session_state["cpi_summary"] = fetch_pattern_summary(
+            occurrence_rows = fetch_pattern_occurrence_rows(
                 driver,
                 connection["database"],
                 pattern,
                 objective_type,
+            )
+            st.session_state["cpi_occurrence_rows"] = occurrence_rows
+            st.session_state["cpi_summary"] = aggregate_occurrence_rows(
+                pattern,
+                objective_type,
+                occurrence_rows,
                 pattern_min,
             )
-            st.session_state.pop("cpi_occurrences", None)
+            st.session_state["cpi_summary_signature"] = _summary_signature(pattern, objective_type, pattern_min)
+            st.session_state.pop("cpi_occurrence_index", None)
+            st.session_state.pop("cpi_selected_aggregate_key", None)
         except Exception as exc:  # noqa: BLE001
             st.error(f"Could not derive pattern aggregates: {exc}")
         finally:
             driver.close()
+    summary_signature = st.session_state.get("cpi_summary_signature")
+    current_summary_signature = _summary_signature(pattern, objective_type, pattern_min)
 
+    if summary_signature != current_summary_signature:
+        st.session_state.pop("cpi_summary", None)
+        st.session_state.pop("cpi_occurrence_rows", None)
+        st.session_state.pop("cpi_occurrence_index", None)
+        st.session_state.pop("cpi_selected_aggregate_key", None)
+
+        st.info(
+            "The pattern configuration changed. "
+            "Press `Find pattern aggregates` to derive the matching aggregates."
+        )
+        return None
     summary = st.session_state.get("cpi_summary", [])
     if not summary:
         st.info("Choose a pattern and derive its aggregated occurrences.")
@@ -124,65 +232,81 @@ def _render_pattern_selection(connection: Dict[str, str]) -> Optional[Dict[str, 
     display_rows = [
         {
             "index": index,
+            "source class id": row["source_class_id"],
             "from": row["source_activity"],
+            "target class id": row["target_class_id"],
             "to": row["target_activity"],
             "frequency": row["frequency"],
-            "average performance": format_seconds(row.get("avg_seconds")),
+            "average performance": format_seconds(row.get("avg_duration_seconds")),
         }
         for index, row in enumerate(summary)
     ]
     st.dataframe(display_rows, width="stretch", hide_index=True)
-    selection = st.selectbox(
+    aggregate_keys = [_aggregate_key(row) for row in summary]
+
+    selected_key = st.selectbox(
         "Selected aggregate",
-        list(range(len(summary))),
-        format_func=lambda i: (
-            f"{summary[i]['source_activity']} -> {summary[i]['target_activity']} | "
-            f"n={summary[i]['frequency']} | avg={format_seconds(summary[i].get('avg_seconds'))}"
-        ),
-        key="cpi_selected_aggregate",
+        aggregate_keys,
+        format_func=lambda key: next(_aggregate_label(row) for row in summary if _aggregate_key(row) == key),
+        key="cpi_selected_aggregate_key",
     )
+    selected = next(row for row in summary if _aggregate_key(row) == selected_key)
+    _render_selected_aggregate_details(selected)
     return {
         "pattern": pattern,
         "objective_type": objective_type,
-        "selected": summary[selection],
+        "selected": selected,
     }
 
 
 def _render_occurrences(connection: Dict[str, str], pattern: str, objective_type: str, selected: Dict[str, object]) -> None:
     st.subheader("3. Concrete occurrences")
-    max_occurrences = max(1, int(selected.get("frequency") or 1))
-    occurrence_limit = st.slider(
-        "Occurrence limit",
-        min_value=1,
-        max_value=max_occurrences,
-        value=max_occurrences,
-        help="The maximum equals the number of occurrences in the selected aggregate.",
-        key="cpi_occurrence_limit",
-    )
-    if st.button("Load concrete occurrences", key="cpi_load_concrete_occurrences"):
-        driver, error = neo4j_shared.get_neo4j_driver(connection["uri"], connection["user"], connection["password"])
-        if driver is None:
-            st.error(error)
-            return
-        try:
-            st.session_state["cpi_occurrences"] = fetch_occurrences(
-                driver,
-                connection["database"],
-                pattern,
-                objective_type,
-                str(selected["source_id"]),
-                str(selected["target_id"]),
-                occurrence_limit,
-            )
-        except Exception as exc:  # noqa: BLE001
-            st.error(f"Could not load occurrences: {exc}")
-        finally:
-            driver.close()
-
-    occurrences = st.session_state.get("cpi_occurrences", [])
-    if not occurrences:
-        st.info("Load the event-level evidence for the selected aggregate.")
+    aggregate_frequency = int(selected.get("frequency") or 0)
+    if aggregate_frequency <= 0:
+        st.warning("The selected aggregate reports 0 occurrences, so no concrete event-level evidence can be loaded.")
         return
+
+    if aggregate_frequency > 1:
+        occurrence_limit = st.slider(
+            "Occurrence limit",
+            min_value=1,
+            max_value=aggregate_frequency,
+            value=aggregate_frequency,
+            help="The maximum equals the number of occurrences in the selected aggregate.",
+            key="cpi_occurrence_limit",
+        )
+    else:
+        occurrence_limit = 1
+        st.caption("Occurrence limit: 1 available occurrence for this aggregate.")
+
+    st.info(
+        f"The rows below are the {aggregate_frequency} event-level occurrence"
+        f"{'' if aggregate_frequency == 1 else 's'} aggregated into this exact "
+        "source-class to target-class pattern transition."
+    )
+    occurrence_rows = st.session_state.get("cpi_occurrence_rows", [])
+    occurrences = filter_occurrences_for_aggregate(
+        occurrence_rows,
+        str(selected["source_class_id"]),
+        str(selected["target_class_id"]),
+        occurrence_limit,
+    )
+
+    if not occurrences:
+        st.info("No event-level occurrences were found for the selected aggregate.")
+        return
+
+    if len(occurrences) != aggregate_frequency:
+        st.warning(
+            f"Aggregate reports {aggregate_frequency} occurrence"
+            f"{'' if aggregate_frequency == 1 else 's'}, but the detail query returned {len(occurrences)}. "
+            "Check summary/detail predicate consistency."
+        )
+
+    st.caption(
+        f"Expected class pair: `{selected['source_class_id']}` -> "
+        f"`{selected['target_class_id']}`"
+    )
 
     st.dataframe(table_safe_rows(occurrences), width="stretch", hide_index=True)
     occurrence_index = st.selectbox(
