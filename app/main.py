@@ -33,7 +33,8 @@ def main() -> None:
         collaboration_ekg_layer.render_page()
         return
 
-    ekg_visualizer.render_page()
+    if page == "Aggregate EKG":
+        ekg_visualizer.render_page()
 
 
 if __name__ == "__main__":

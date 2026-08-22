@@ -165,6 +165,7 @@ def build_occurrence_lane_graph(pattern: str, occurrence: Dict[str, Any], index:
         e3 = str(occurrence.get("return_event"))
         returning_robot = occurrence.get("returning_robot")
         intermediate_robot = occurrence.get("intermediate_robot")
+        capabilities = ", ".join(str(value) for value in occurrence.get("capabilities") or []) or "?"
         _lane_node(dot, f"return_lane_{index}", f"Returning robot {returning_robot}")
         _lane_node(dot, f"intermediate_lane_{index}", f"Intermediate robot {intermediate_robot}")
         _activity_node(
@@ -176,7 +177,7 @@ def build_occurrence_lane_graph(pattern: str, occurrence: Dict[str, Any], index:
         _activity_node(
             dot,
             e2,
-            _event_label(occurrence.get("intermediate_activity"), f"capability {occurrence.get('capability')}", f"event {e2}"),
+            _event_label(occurrence.get("intermediate_activity"), f"capabilities {capabilities}", f"event {e2}"),
             color,
         )
         _activity_node(

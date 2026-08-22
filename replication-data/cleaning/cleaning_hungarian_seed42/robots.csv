@@ -1,0 +1,15 @@
+robot_id,capability
+r1,camera
+r1,vacuum
+r2,mop
+r3,mop
+r3,vacuum
+r4,bin_handler
+r4,disinfect
+r5,camera
+r5,vacuum
+r6,mop
+r7,mop
+r7,vacuum
+r8,bin_handler
+r8,disinfect

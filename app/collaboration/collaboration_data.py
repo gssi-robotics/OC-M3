@@ -119,7 +119,6 @@ def build_pattern_catalog(factory: Any) -> Dict[str, Dict[str, str]]:
     for objective in ("Mission", "Segment"):
         occurrence_specs = [
             (f"handover_{objective.lower()}", "robot_handover"),
-            (f"co_participation_{objective.lower()}", "co_participation"),
             (f"objective_switch_{objective.lower()}", "objective_switch"),
             (f"capability_driven_return_{objective.lower()}", "capability_driven_return"),
         ]
@@ -136,16 +135,23 @@ def build_pattern_catalog(factory: Any) -> Dict[str, Dict[str, str]]:
         if query:
             occurrences[key] = query
 
-    for key, method in (
-        ("handover_time_diagnostics", "handover_time_diagnostics"),
-        ("objective_switch_time_diagnostics", "objective_switch_time_diagnostics"),
-        ("co_participation_team_diagnostics", "co_participation_team_diagnostics"),
-        ("capability_return_diagnostics", "capability_return_diagnostics"),
-        ("sync_diagnostics_parallel_segments", "synchronization_diagnostics_parallel_segments"),
-    ):
-        query = _maybe_call(factory, method)
-        if query:
-            diagnostics[key] = query
+    for objective in ("Mission", "Segment"):
+        diagnostic_specs = [
+            (f"handover_diagnostics_by_{objective.lower()}", "handover_diagnostics_by_objective"),
+            (f"switch_diagnostics_by_robot_{objective.lower()}", "switch_diagnostics_by_robot"),
+            (f"cap_return_diagnostics_by_capability_{objective.lower()}", "cap_return_diagnostics_by_capability"),
+            (f"allocation_continuity_{objective.lower()}", "allocation_continuity"),
+            (f"resource_participation_{objective.lower()}", "resource_participation"),
+            (f"capability_demand_availability_{objective.lower()}", "capability_demand_availability"),
+        ]
+        for key, method in diagnostic_specs:
+            query = _maybe_call(factory, method, objective)
+            if query:
+                diagnostics[key] = query
+
+    sync_query = _maybe_call(factory, "synchronization_diagnostics_parallel_segments")
+    if sync_query:
+        diagnostics["sync_diagnostics_parallel_segments"] = sync_query
 
     return {"Occurrences": occurrences, "Diagnostics": diagnostics}
 

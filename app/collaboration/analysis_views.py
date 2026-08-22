@@ -969,8 +969,10 @@ def render_object_centric_pairwise_tab(driver: Any, database: Optional[str], cat
         render_switch_flow_pairwise_view(driver, database, catalog, log_name, row_limit)
 
 def fetch_activity_dfg(driver: Any, database: Optional[str], log_name: Optional[str], perspective: str, limit: int, min_frequency: int) -> List[Dict[str, Any]]:
-    query = """
-    MATCH (e1:Event)-[df:DF]->(e2:Event)
+    relationship = "DF_Control" if perspective == "Robot (all events)" else "DF"
+    relationship_perspective = "Robot" if perspective == "Robot (all events)" else perspective
+    query = f"""
+    MATCH (e1:Event)-[df:{relationship}]->(e2:Event)
     WHERE coalesce(df.type, df.perspective_type) = $perspective
       AND ($log_name IS NULL OR e1.Log = $log_name OR e2.Log = $log_name)
     WITH
@@ -991,7 +993,7 @@ def fetch_activity_dfg(driver: Any, database: Optional[str], log_name: Optional[
         driver,
         database,
         query,
-        {"log_name": log_name, "perspective": perspective, "limit": int(limit), "min_frequency": int(min_frequency)},
+        {"log_name": log_name, "perspective": relationship_perspective, "limit": int(limit), "min_frequency": int(min_frequency)},
     )
 
 def render_activity_dfg_graphviz(rows: List[Dict[str, Any]], perspective: str) -> None:
@@ -1016,7 +1018,13 @@ def render_process_maps_tab(driver: Any, database: Optional[str], catalog: Dict[
     )
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
-        perspective = st.selectbox("DF perspective", ["Mission", "Segment", "Robot"], index=0, key="pm_dfg_perspective")
+        perspective = st.selectbox(
+            "DF perspective",
+            ["Mission", "Segment", "Robot", "Robot (all events)"],
+            index=0,
+            key="pm_dfg_perspective",
+            help="Robot (all events) uses DF_Control and includes both Task and Control events.",
+        )
     with c2:
         min_frequency = st.slider("Minimum edge frequency", min_value=1, max_value=50, value=1, step=1, key="pm_dfg_min_frequency")
     with c3:
@@ -1030,34 +1038,37 @@ def render_process_maps_tab(driver: Any, database: Optional[str], catalog: Dict[
 def _capability_ids(value: Any) -> List[str]:
     return _node_id_list(value)
 
-def render_capability_pressure_chart(rows: List[Dict[str, Any]]) -> None:
+def render_capability_demand_chart(rows: List[Dict[str, Any]]) -> None:
     go, _ = _plotly_required()
     prepared = []
     for row in rows:
         capability = node_id(row.get("capability")) or "unknown"
+        objective = node_id(row.get("objective")) or "unknown"
         prepared.append({
-            "capability": capability,
-            "capReturnCount": _safe_number(row.get("capReturnCount")),
+            "label": f"{objective} / {capability}",
+            "requirementCount": _safe_number(row.get("requirementCount")),
             "availability": _safe_number(row.get("availability")),
-            "capPressure": _safe_number(row.get("capPressure")),
-            "avgReturnTime": row.get("avgReturnTime"),
+            "demandAvailabilityRatio": _safe_number(row.get("demandAvailabilityRatio")),
         })
-    prepared = sorted(prepared, key=lambda item: (-item["capPressure"], -item["capReturnCount"]))
+    prepared = sorted(
+        prepared,
+        key=lambda item: (-item["demandAvailabilityRatio"], -item["requirementCount"]),
+    )
     if not prepared:
-        st.info("No capability-pressure diagnostics found.")
+        st.info("No capability demand/availability diagnostics found.")
         return
     fig = go.Figure(go.Bar(
-        x=[item["capPressure"] for item in prepared],
-        y=[item["capability"] for item in prepared],
+        x=[item["demandAvailabilityRatio"] for item in prepared],
+        y=[item["label"] for item in prepared],
         orientation="h",
-        customdata=[[item["capReturnCount"], item["availability"], format_seconds(item.get("avgReturnTime"))] for item in prepared],
-        hovertemplate="capability=%{y}<br>capPressure=%{x:.3f}<br>returns=%{customdata[0]}<br>availability=%{customdata[1]}<br>avgReturnTime=%{customdata[2]}<extra></extra>",
+        customdata=[[item["requirementCount"], item["availability"]] for item in prepared],
+        hovertemplate="objective / capability=%{y}<br>demand/availability=%{x:.3f}<br>requirements=%{customdata[0]}<br>availability=%{customdata[1]}<extra></extra>",
     ))
     fig.update_layout(
-        title="Capability pressure ranking",
+        title="Capability demand-to-availability ranking",
         height=max(380, min(850, 110 + 32 * len(prepared))),
-        xaxis_title="capPressure = capReturnCount / availability",
-        yaxis_title="Capability",
+        xaxis_title="requirement count / provider availability",
+        yaxis_title="Objective / capability",
         template="plotly_white",
     )
     st.plotly_chart(fig, width="stretch", config={"scrollZoom": True, "displaylogo": False}, key="capability_pressure_chart")
@@ -1085,22 +1096,32 @@ def render_capability_return_motifs(rows: List[Dict[str, Any]]) -> None:
 
 def render_capability_diagnostics_tab(driver: Any, database: Optional[str], catalog: Dict[str, Dict[str, str]], log_name: Optional[str]) -> None:
     st.subheader("Capability Diagnostics")
-    st.caption("Diagnose whether collaboration structures are explained by scarce or specialized robot capabilities.")
+    st.caption("Compare objective-level capability demand with provider availability and inspect capability-driven returns.")
     row_limit = st.slider("Rows per capability query", min_value=50, max_value=3000, value=800, step=50, key="capability_row_limit")
     diagnostic_rows: List[Dict[str, Any]] = []
+    demand_rows: List[Dict[str, Any]] = []
     for name, query in catalog.get("Diagnostics", {}).items():
         if name.startswith("cap_return_diagnostics"):
             for row in run_pattern_query(driver, database, query, log_name, row_limit):
                 row["_diagnostic_view"] = name
                 diagnostic_rows.append(row)
+        elif name.startswith("capability_demand_availability"):
+            for row in run_pattern_query(driver, database, query, log_name, row_limit):
+                row["_diagnostic_view"] = name
+                demand_rows.append(row)
     occurrence_rows = _collect_occurrence_rows(catalog, driver, database, log_name, ("capability_driven_return_",), row_limit)
     render_dashboard_cards([
         {"label": "Capability returns", "value": str(len(occurrence_rows)), "caption": "Return structures explained by missing capabilities", "accent": "#7C3AED"},
-        {"label": "Capability diagnostics", "value": str(len(diagnostic_rows)), "caption": "Capability pressure rows", "accent": "#2563EB"},
+        {"label": "Demand contexts", "value": str(len(demand_rows)), "caption": "Objective-capability demand/availability rows", "accent": "#2563EB"},
     ])
     c1, c2 = st.columns([1.15, 1])
     with c1:
-        render_capability_pressure_chart(diagnostic_rows)
+        render_capability_demand_chart(demand_rows)
     with c2:
         st.markdown("#### Capability-return motifs")
         render_capability_return_motifs(occurrence_rows)
+    with st.expander("Capability indicator tables", expanded=False):
+        st.markdown("**Demand and availability**")
+        _plot_table(demand_rows)
+        st.markdown("**Capability-driven return summary**")
+        _plot_table(diagnostic_rows)

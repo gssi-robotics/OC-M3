@@ -186,7 +186,10 @@ def clear_state() -> None:
 
 def render_page() -> None:
     st.title("Object-Centric Collaboration Mining Dashboard")
-    st.write("Analyze handovers, co-participation, objective switches, capability-driven returns, and parallel collaboration over the EKG.")
+    st.write(
+        "Analyze robot handovers, objective switches, capability-driven returns, and parallel "
+        "collaboration together with allocation, resource, capability, and synchronization indicators."
+    )
     render_paper_scope_panel()
 
     neo4j_shared.render_connection_summary()

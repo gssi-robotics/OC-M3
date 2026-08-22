@@ -1,0 +1,6 @@
+task_name,required_capability
+disinfect,disinfect
+empty_bin,bin_handler
+inspect,camera
+mop,mop
+vacuum,vacuum

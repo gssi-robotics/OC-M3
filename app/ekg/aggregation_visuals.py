@@ -4,17 +4,19 @@ from typing import Any, Dict, List
 
 import streamlit as st
 
+from collaboration.collaboration_utils import table_safe_rows
 
-CLASS_COLOR = "#8EC5FC"
+
+CLASS_COLOR = "#E4E4E4"
 PERSPECTIVE_COLORS = [
-    "#D1495B",
-    "#2E86AB",
+    "#6C5CE7",
+    "#E2641C",
+    "#1FA5DE",
     "#3C8D40",
+    "#D1495B",
     "#8E6C8A",
     "#F18F01",
     "#0B6E4F",
-    "#6C5CE7",
-    "#C44536",
 ]
 
 
@@ -87,8 +89,11 @@ def build_graphviz(
         perspective = str(row.get("perspective") or "DF")
         color = color_by_perspective.get(perspective, "#4A4A4A")
         label = f"{perspective} | n={row['frequency']}"
-        if show_time and row.get("avg_transition_seconds") is not None:
-            label += f"\navg={float(row['avg_transition_seconds']):.2f}s"
+        avg_seconds = row.get("avg_transition_seconds")
+        if avg_seconds is None:
+            avg_seconds = row.get("avg_seconds")
+        if show_time and avg_seconds is not None:
+            label += f"\navg={float(avg_seconds):.2f}s"
         dot.edge(
             str(row["source_id"]),
             str(row["target_id"]),
@@ -99,7 +104,7 @@ def build_graphviz(
             tooltip=(
                 f"Perspective: {perspective}\n"
                 f"Frequency: {row['frequency']}\n"
-                f"Average transition: {row.get('avg_transition_seconds')} seconds"
+                f"Average transition: {avg_seconds} seconds"
             ),
         )
 
@@ -127,3 +132,56 @@ def render_perspective_legend(color_by_perspective: Dict[str, str]) -> None:
         '<div style="margin:0.25rem 0 0.8rem 0;">' + ''.join(chips) + '</div>',
         unsafe_allow_html=True,
     )
+
+
+def render_class_dfg_panel(
+    rows: List[Dict[str, Any]],
+    *,
+    show_time: bool,
+    key_prefix: str,
+    empty_message: str,
+    detail_expander_label: str = "DF_C details",
+) -> None:
+    if not rows:
+        st.info(empty_message)
+        return
+
+    perspectives = sorted({str(row.get("perspective") or "DF") for row in rows})
+    selected_perspectives = st.multiselect(
+        "Visible perspectives",
+        options=perspectives,
+        default=perspectives,
+        help="Hide or show DF_C edges by perspective without changing Neo4j.",
+        key=f"{key_prefix}_visible_perspectives",
+    )
+
+    filtered_rows = [
+        row for row in rows if str(row.get("perspective") or "DF") in selected_perspectives
+    ]
+    color_by_perspective = perspective_colors(rows)
+    visible_colors = {
+        perspective: color_by_perspective[perspective]
+        for perspective in selected_perspectives
+        if perspective in color_by_perspective
+    }
+
+    st.caption(
+        f"Showing {len(filtered_rows)} of {len(rows)} edges across "
+        f"{len(selected_perspectives)} perspective(s)."
+    )
+    render_perspective_legend(visible_colors)
+
+    if filtered_rows:
+        st.graphviz_chart(
+            build_graphviz(
+                filtered_rows,
+                show_time,
+                color_by_perspective,
+            ),
+            width="stretch",
+        )
+    else:
+        st.info("Select at least one perspective to display its edges.")
+
+    with st.expander(detail_expander_label):
+        st.dataframe(table_safe_rows(filtered_rows), width="stretch", hide_index=True)

@@ -26,12 +26,6 @@ PATTERN_METADATA: Dict[str, Dict[str, str]] = {
         "question": "Where is work transferred between robots?",
         "paper_link": "Robot handover: transfer of work within the same mission or segment.",
     },
-    "co_participation": {
-        "family": "Team composition",
-        "short": "CP",
-        "question": "Which missions or segments require several robots?",
-        "paper_link": "Co-participation: shared contribution to the same objective context.",
-    },
     "objective_switch": {
         "family": "Allocation dynamics",
         "short": "SW",

@@ -8,7 +8,8 @@ The loader follows the paper data model:
     (:Entity {type: 'Segment'})-[:PART_OF]->(:Entity {type: 'Mission'})
     (:Entity {type: 'Robot'})-[:HAS]->(:Capability)
     (:Event)-[:REQ]->(:Capability)
-    (:Event)-[:DF]->(:Event)
+    (:Event {Type: 'Task'})-[:DF]->(:Event {Type: 'Task'})
+    (:Event)-[:DF_Control]->(:Event)
 
 The Streamlit app only stores file paths and column mappings. CORR, PART_OF,
 REQ, HAS, and DF relationships are inferred by the backend through these queries.
@@ -35,7 +36,7 @@ Notes:
   paths will work. Otherwise, copy the files into Neo4j's import directory and adjust
   paths in the JSON config.
 - Event start/end are loaded as datetime values and canonical event properties are:
-  event_id, activity, start, end. Additional selected event attributes are also stored.
+  event_id, activity, Type, start, end. Additional selected event attributes are also stored.
 - Entity nodes use canonical properties: id and type.
 - The `Log` property is stored on nodes for traceability, but the generated queries
   assume a single log per Neo4j database and do not match/filter by `Log`.
@@ -133,6 +134,7 @@ def load_events_query(config: Dict[str, Any]) -> str:
 
     event_id_col = config["event_id"]
     activity_col = config["event_activity"]
+    event_type_col = config["event_type"]
     start_col = config["event_start"]
     end_col = config["event_end"]
 
@@ -148,6 +150,7 @@ MERGE (e:Event {{event_id: {line_value(event_id_col)}}})
 SET e.Log = {json.dumps(log_name)}
 SET e.id = {line_value(event_id_col)}
 SET e.activity = {line_value(activity_col)}
+SET e.Type = {line_value(event_type_col)}
 SET e.start = {value_expr(start_col, 'Datetime')}
 SET e.end = {value_expr(end_col, 'Datetime')}
 {extra_sets}
@@ -234,7 +237,9 @@ def load_corr_query(config: Dict[str, Any], entity_type: str, event_column: str)
     uri = csv_uri(events["path"])
     log_name = config["log_name"]
     event_id_col = config["event_id"]
+    event_type_col = config["event_type"]
     normalized_type = normalize_entity_type(entity_type)
+    task_filter = "" if normalized_type == "Robot" else f"\n  AND {line_value(event_type_col)} = 'Task'"
 
     return f"""
 LOAD CSV WITH HEADERS FROM {json.dumps(uri)} AS line
@@ -242,7 +247,7 @@ WITH line
 WHERE {line_value(event_id_col)} IS NOT NULL
   AND trim({line_value(event_id_col)}) <> ''
   AND {line_value(event_column)} IS NOT NULL
-  AND trim({line_value(event_column)}) <> ''
+  AND trim({line_value(event_column)}) <> ''{task_filter}
 MATCH (e:Event {{event_id: {line_value(event_id_col)}}})
 MATCH (n:Entity {{type: {json.dumps(normalized_type)}, id: {line_value(event_column)}}})
 MERGE (e)-[:CORR]->(n)
@@ -258,10 +263,12 @@ def load_part_of_query(config: Dict[str, Any]) -> Optional[str]:
 
     events = config["events"]
     uri = csv_uri(events["path"])
-    log_name = config["log_name"]
+    event_type_col = config["event_type"]
 
     return f"""
 LOAD CSV WITH HEADERS FROM {json.dumps(uri)} AS line
+WITH line
+WHERE {line_value(event_type_col)} = 'Task'
 WITH DISTINCT {line_value(segment_col)} AS segment_id, {line_value(mission_col)} AS mission_id
 WHERE segment_id IS NOT NULL AND trim(segment_id) <> ''
   AND mission_id IS NOT NULL AND trim(mission_id) <> ''
@@ -295,6 +302,7 @@ def load_req_query(config: Dict[str, Any]) -> str:
 
     event_id_col = config["event_id"]
     activity_col = config["event_activity"]
+    event_type_col = config["event_type"]
     task_col = task_caps["task_column"]
     cap_col = task_caps["capability_column"]
 
@@ -303,6 +311,7 @@ def load_req_query(config: Dict[str, Any]) -> str:
         WITH eventLine
         WHERE {f'eventLine.{cypher_identifier(event_id_col)}'} IS NOT NULL
         AND trim({f'eventLine.{cypher_identifier(event_id_col)}'}) <> ''
+        AND eventLine.{cypher_identifier(event_type_col)} = 'Task'
         LOAD CSV WITH HEADERS FROM {json.dumps(cap_uri)} AS capLine
         WITH eventLine, capLine
         WHERE capLine.{cypher_identifier(task_col)} = eventLine.{cypher_identifier(activity_col)}
@@ -361,16 +370,16 @@ def load_relationship_queries(config: Dict[str, Any]) -> List[Dict[str, str]]:
 
 
 def derive_df_query(config: Dict[str, Any], entity_type: str) -> str:
-    """Create interval-based directly-follows edges for one entity type."""
+    """Create interval-based directly-follows edges between Task events."""
     normalized_type = normalize_entity_type(entity_type)
 
     return f"""
-MATCH (t:Entity {{type: {json.dumps(normalized_type)}}})<-[:CORR]-(e1:Event)
-MATCH (t)<-[:CORR]-(e2:Event)
+MATCH (t:Entity {{type: {json.dumps(normalized_type)}}})<-[:CORR]-(e1:Event {{Type: "Task"}})
+MATCH (t)<-[:CORR]-(e2:Event {{Type: "Task"}})
 WHERE e1.event_id <> e2.event_id
   AND e1.end <= e2.start
   AND NOT EXISTS {{
-    MATCH (t)<-[:CORR]-(e3:Event)
+    MATCH (t)<-[:CORR]-(e3:Event {{Type: "Task"}})
     WHERE e3.event_id <> e1.event_id
       AND e3.event_id <> e2.event_id
       AND e1.end <= e3.start
@@ -382,12 +391,39 @@ SET df.transitionTime = duration.between(e1.end, e2.start)
 """.strip()
 
 
+def derive_df_control_query(config: Dict[str, Any]) -> Optional[str]:
+    """Create robot-perspective directly-follows edges across all event types."""
+    if "Robot" not in config["events"].get("entity_columns", {}):
+        return None
+
+    return """
+MATCH (robot:Entity {type: "Robot"})<-[:CORR]-(e1:Event)
+MATCH (robot)<-[:CORR]-(e2:Event)
+WHERE e1.event_id <> e2.event_id
+  AND e1.end <= e2.start
+  AND NOT EXISTS {
+    MATCH (robot)<-[:CORR]-(e3:Event)
+    WHERE e3.event_id <> e1.event_id
+      AND e3.event_id <> e2.event_id
+      AND e1.end <= e3.start
+      AND e3.end <= e2.start
+  }
+MERGE (e1)-[df:DF_Control {perspective_id: robot.id, type: robot.type}]->(e2)
+SET df.transitionTimeSeconds = duration.inSeconds(e1.end, e2.start).seconds
+SET df.transitionTime = duration.between(e1.end, e2.start)
+""".strip()
+
+
 def derive_all_df_queries(config: Dict[str, Any]) -> List[Dict[str, str]]:
     entity_types = list(config["events"].get("entity_columns", {}).keys())
-    return [
+    steps = [
         query_step(f"derive_df_{normalize_entity_type(entity_type).lower()}", derive_df_query(config, entity_type))
         for entity_type in entity_types
     ]
+    df_control = derive_df_control_query(config)
+    if df_control:
+        steps.append(query_step("derive_df_control_robot", df_control))
+    return steps
 
 
 # -----------------------------------------------------------------------------

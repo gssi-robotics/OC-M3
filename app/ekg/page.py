@@ -6,7 +6,7 @@ import streamlit as st
 
 import neo4j_shared
 from ekg.aggregation_data import fetch_class_graph, materialize_aggregation
-from ekg.aggregation_visuals import build_graphviz, perspective_colors, render_perspective_legend
+from ekg.aggregation_visuals import render_class_dfg_panel
 
 
 def clear_state() -> None:
@@ -147,49 +147,12 @@ def _render_class_dfg_controls(connection: Dict[str, str]) -> None:
 
 def _render_class_dfg(show_time: bool) -> None:
     rows = st.session_state.get("agg_rows", [])
-    if not rows:
-        st.info("Create the aggregation, then press Visualize class graph.")
-        return
-
-    perspectives = sorted({str(row.get("perspective") or "DF") for row in rows})
-    selected_perspectives = st.multiselect(
-        "Visible perspectives",
-        options=perspectives,
-        default=perspectives,
-        help="Hide or show DF_C edges by perspective without changing Neo4j.",
-        key="ekg_visible_perspectives",
+    render_class_dfg_panel(
+        rows,
+        show_time=show_time,
+        key_prefix="ekg",
+        empty_message="Create the aggregation, then press Visualize class graph.",
     )
-
-    filtered_rows = [
-        row for row in rows if str(row.get("perspective") or "DF") in selected_perspectives
-    ]
-    color_by_perspective = perspective_colors(rows)
-    visible_colors = {
-        perspective: color_by_perspective[perspective]
-        for perspective in selected_perspectives
-        if perspective in color_by_perspective
-    }
-
-    st.caption(
-        f"Showing {len(filtered_rows)} of {len(rows)} edges across "
-        f"{len(selected_perspectives)} perspective(s)."
-    )
-    render_perspective_legend(visible_colors)
-
-    if filtered_rows:
-        st.graphviz_chart(
-            build_graphviz(
-                filtered_rows,
-                show_time,
-                color_by_perspective,
-            ),
-            width="stretch",
-        )
-    else:
-        st.info("Select at least one perspective to display its edges.")
-
-    with st.expander("DF_C details"):
-        st.dataframe(filtered_rows, width="stretch")
 
 
 def render_page() -> None:

@@ -73,7 +73,7 @@ def render_paper_scope_panel() -> None:
     <div style="border:1px solid #dbeafe; border-radius:18px; padding:18px 20px; background:linear-gradient(135deg,#eff6ff 0%,#ffffff 58%); margin:8px 0 18px 0;">
         <div style="font-size:18px; font-weight:800; color:#0f172a; margin-bottom:8px;">Object-centric collaboration diagnostics</div>
         <div style="font-size:14px; color:#334155; line-height:1.5; max-width:1150px;">
-        This page operationalizes the paper's idea of deriving collaboration-oriented views from an EKG. Pattern queries return concrete EKG matches, while the dashboard aggregates them into diagnostic signals: occurrence counts, rates, temporal costs, team composition, capability pressure, and synchronization effects. The mission timeline is deliberately event-level: each block is one task execution and robot lanes are the y-axis.
+        This page operationalizes the paper's collaboration structures over the EKG. Pattern queries return concrete matches, while the dashboard connects them to occurrence rates, transition and control-event context, allocation continuity, workload share, capability demand and availability, parallel resource coupling, and segment synchronization. The mission timeline remains task-level, with each block representing one task execution.
         </div>
     </div>
     """

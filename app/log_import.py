@@ -281,6 +281,11 @@ def map_event_log(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         with c2:
             activity = select_column("Activity name", columns, "activity")
             end_time = select_column("End time", columns, "end_time")
+        event_type = select_column(
+            "Event type (Task or Control)",
+            columns,
+            "event_type",
+        )
 
         st.subheader("Entity columns in event log")
         entity_columns: Dict[str, str] = {}
@@ -298,7 +303,7 @@ def map_event_log(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
                     entity_columns[entity_type] = selected
 
         st.subheader("Event attributes to import")
-        protected = {event_id, activity, start_time, end_time, *entity_columns.values()}
+        protected = {event_id, activity, event_type, start_time, end_time, *entity_columns.values()}
         default_attrs = [col for col in columns if col in protected]
         event_attrs = st.multiselect(
             "Event properties",
@@ -313,9 +318,9 @@ def map_event_log(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         return None
 
     if submitted:
-        core = [event_id, activity, start_time, end_time]
+        core = [event_id, activity, event_type, start_time, end_time]
         if len(set(core)) != len(core):
-            st.error("Event ID, activity, start time, and end time must be distinct columns.")
+            st.error("Event ID, activity, event type, start time, and end time must be distinct columns.")
             return None
         if not entity_columns:
             st.error("Select at least one entity column.")
@@ -328,6 +333,7 @@ def map_event_log(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         mapping = {
             "event_id": event_id,
             "event_activity": activity,
+            "event_type": event_type,
             "event_start": start_time,
             "event_end": end_time,
             "entity_columns": entity_columns,
@@ -478,7 +484,7 @@ def map_task_capabilities(upload_dir: Path) -> Optional[Dict[str, Any]]:
 # -----------------------------------------------------------------------------
 
 
-def validate_mapping(event_df: pd.DataFrame, mapping: Dict[str, Any]) -> None:
+def validate_mapping(event_df: pd.DataFrame, mapping: Dict[str, Any]) -> bool:
     st.header("Validation")
 
     event_id = mapping["event_id"]
@@ -496,10 +502,27 @@ def validate_mapping(event_df: pd.DataFrame, mapping: Dict[str, Any]) -> None:
     else:
         st.success("Start/end timestamps are parseable and ordered.")
 
+    event_types = event_df[mapping["event_type"]].dropna().astype(str).str.strip()
+    invalid_types = sorted(set(event_types) - {"Task", "Control"})
+    missing_types = event_df[mapping["event_type"]].isna().sum() + (event_types == "").sum()
+    if invalid_types or missing_types:
+        details = []
+        if missing_types:
+            details.append(f"{missing_types:,} missing values")
+        if invalid_types:
+            details.append("invalid values: " + ", ".join(invalid_types))
+        st.error("Event type must be either `Task` or `Control` (" + "; ".join(details) + ").")
+        event_types_valid = False
+    else:
+        st.success("Event types contain only Task and Control values.")
+        event_types_valid = True
+
     for entity_type, column in mapping["entity_columns"].items():
         missing = event_df[column].isna().sum()
         if missing:
             st.warning(f"{entity_type} column `{column}` has {missing:,} missing values.")
+
+    return event_types_valid
 
 
 def build_loader_config(
@@ -513,6 +536,7 @@ def build_loader_config(
     forced_event_types = {
         mapping["event_id"]: "String",
         mapping["event_activity"]: "String",
+        mapping["event_type"]: "String",
         mapping["event_start"]: "Datetime",
         mapping["event_end"]: "Datetime",
     }
@@ -526,6 +550,7 @@ def build_loader_config(
         "log_name": log_name,
         "event_id": mapping["event_id"],
         "event_activity": mapping["event_activity"],
+        "event_type": mapping["event_type"],
         "event_start": mapping["event_start"],
         "event_end": mapping["event_end"],
         "entity_id": "entity_id",
@@ -550,6 +575,7 @@ def render_config(config: Dict[str, Any]) -> None:
         {
             "log_name": config["log_name"],
             "event_file": config["events"]["path"],
+            "event_type_column": config["event_type"],
             "event_attributes": len(config["events"]["attr"]),
             "entity_sources": list(config["entities"].keys()),
             "task_capability_file": config["task_capabilities"]["path"],
@@ -571,7 +597,7 @@ def render_config(config: Dict[str, Any]) -> None:
     st.caption(
         "Backend responsibility: load Event and Entity nodes from the configured paths, "
         "infer CORR from events.entity_columns, infer PART_OF from Segment/Mission columns, "
-        "and create REQ edges from task_capabilities."
+        "create REQ edges from task_capabilities, and derive DF/DF_Control relationships."
     )
 
 
@@ -693,7 +719,9 @@ def render_page() -> None:
         st.info("Apply the event/entity mapping to continue.")
         return
 
-    validate_mapping(event_df, mapping)
+    if not validate_mapping(event_df, mapping):
+        st.info("Fix the event type values and upload the event log again to continue.")
+        return
 
     entities = map_entity_files(
         entity_columns=mapping["entity_columns"],
