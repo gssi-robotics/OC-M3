@@ -1411,10 +1411,8 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
         "Two-level view: an all-missions overview for comparison, then separate mission-detail panels that keep mission, segment, and robot perspectives visible."
     )
 
-    mission_ids = st.session_state.get("collab_mission_ids")
-    if mission_ids is None:
-        mission_ids = fetch_mission_ids(driver, database, log_name)
-        st.session_state["collab_mission_ids"] = mission_ids
+    mission_ids = fetch_mission_ids(driver, database, log_name)
+    log_key = str(log_name or "all").replace(" ", "_")
 
     if not mission_ids:
         st.info("No missions found for the current database/log filter.")
@@ -1424,7 +1422,7 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
         "Missions in overview",
         mission_ids,
         default=mission_ids,
-        key="collab_overview_missions_timeline",
+        key=f"collab_overview_missions_timeline_{log_key}",
         help="The overview is compact, so it can show all missions by default.",
     )
     if not selected_overview_mission_ids:
@@ -1436,7 +1434,7 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
         "Detailed mission panels",
         selected_overview_mission_ids,
         default=default_detail,
-        key="collab_detail_missions_timeline",
+        key=f"collab_detail_missions_timeline_{log_key}",
         help="Render selected missions as separate panels. This avoids flattening mission, robot, and segment into one crowded y-axis.",
     )
 
@@ -1449,7 +1447,7 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
         timeline_pattern_names,
         default=timeline_pattern_names,
         key="collab_selected_timeline_patterns",
-        help="All pattern types can be shown. CP/PC appear as compact badges; SYNC appears as a vertical marker; HO/SW/CR appear as event links.",
+        help="Parallel collaboration appears as compact badges, synchronization as vertical markers, and handover/switch/return structures as event links.",
     )
 
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1.2])
@@ -1465,7 +1463,6 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
             [
                 "Balanced",
                 "Structural patterns only",
-                "Highlight co-participation",
                 "Highlight parallel collaboration",
                 "Event-to-event patterns only",
             ],

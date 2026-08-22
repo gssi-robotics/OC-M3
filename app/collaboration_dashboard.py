@@ -32,6 +32,10 @@ from collaboration.collaboration_visuals import (
     render_rank_bars,
 )
 from collaboration.timeline_views import render_timeline_tab
+from collaboration.evaluation_views import (
+    render_evaluation_workspace,
+    render_occurrence_explainability,
+)
 from collaboration.analysis_views import (
     render_capability_diagnostics_tab,
     render_object_centric_pairwise_tab,
@@ -180,17 +184,22 @@ def clear_state() -> None:
         "collab_explorer_query_category",
         "collab_query_to_inspect",
         "collab_mission_ids",
+        "evaluation_payload",
+        "evaluation_signature",
+        "evaluation_logs",
+        "explain_rows",
+        "explain_signature",
+        "explain_occurrence_index",
     ):
         st.session_state.pop(key, None)
 
 
 def render_page() -> None:
-    st.title("Object-Centric Collaboration Mining Dashboard")
+    st.title("Collaboration Evaluation")
     st.write(
-        "Analyze robot handovers, objective switches, capability-driven returns, and parallel "
-        "collaboration together with allocation, resource, capability, and synchronization indicators."
+        "Compare multi-robot allocation strategies through collaboration structures and indicators, "
+        "then inspect the Control events that explain individual Task transitions."
     )
-    render_paper_scope_panel()
 
     neo4j_shared.render_connection_summary()
     connection = neo4j_shared.get_connection_settings()
@@ -241,8 +250,9 @@ def render_page() -> None:
         return
 
     logs = st.session_state.get("collab_logs", [])
-    selected_log = st.selectbox("Log filter", [ALL_OPTION] + logs, index=0, key="collab_log_filter")
-    log_name = None if selected_log == ALL_OPTION else selected_log
+    if not logs:
+        st.warning("No EKG logs were found. Load at least one graph before running the evaluation.")
+        return
 
     driver, error = neo4j_shared.get_neo4j_driver(uri, user, password)
     if driver is None:
@@ -250,33 +260,20 @@ def render_page() -> None:
         return
 
     try:
-        (
-            tab_dashboard,
-            tab_pairwise,
-            tab_process_maps,
-            tab_capability,
-            tab_explorer,
-            tab_timeline,
-        ) = st.tabs([
-            "Overview",
-            "Object-Centric Pairwise Views",
-            "Process Maps",
-            "Capability Diagnostics",
-            "Pattern Explorer",
-            "Collaboration Timeline",
-        ])
-        with tab_dashboard:
-            render_dashboard(driver, database, catalog, log_name)
-        with tab_pairwise:
-            render_object_centric_pairwise_tab(driver, database, catalog, log_name)
-        with tab_process_maps:
-            render_process_maps_tab(driver, database, catalog, log_name)
-        with tab_capability:
-            render_capability_diagnostics_tab(driver, database, catalog, log_name)
-        with tab_explorer:
-            render_explorer(driver, database, catalog, log_name)
+        tab_evaluation, tab_timeline, tab_explain = st.tabs(
+            ["Evaluation Export", "Collaboration Timeline", "Explain an Occurrence"]
+        )
+        with tab_evaluation:
+            render_evaluation_workspace(driver, database, catalog, logs)
         with tab_timeline:
-            render_timeline_tab(driver, database, catalog, log_name)
+            selected_log = st.selectbox(
+                "Strategy / log",
+                logs,
+                key="timeline_log_filter",
+            )
+            render_timeline_tab(driver, database, catalog, selected_log)
+        with tab_explain:
+            render_occurrence_explainability(driver, database, catalog, logs)
     finally:
         driver.close()
 

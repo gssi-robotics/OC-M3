@@ -78,6 +78,19 @@ class Schema:
             f"{self.seconds_between(f'{e_i}.{self.event_end_prop}', f'{e_j}.{self.event_start_prop}')})"
         )
 
+    def pre_task_control_expr(self, robot_var: str, task_var: str) -> str:
+        """Control events after the robot's previous Task and before task_var."""
+        return f"""[({robot_var})<-[:{self.corr_rel}]-(ce:{self.event_label})
+          WHERE ce.{self.event_type_prop} = 'Control'
+            AND ce.{self.event_start_prop} IS NOT NULL AND ce.{self.event_end_prop} IS NOT NULL
+            AND ce.{self.event_end_prop} <= {task_var}.{self.event_start_prop}
+            AND NOT EXISTS {{
+              MATCH ({robot_var})<-[:{self.corr_rel}]-(priorTask:{self.event_label})
+              WHERE priorTask.{self.event_type_prop} = 'Task'
+                AND priorTask.{self.event_end_prop} > ce.{self.event_end_prop}
+                AND priorTask.{self.event_end_prop} <= {task_var}.{self.event_start_prop}
+            }} | ce]"""
+
 
 class CollaborationPatternCypher:
     """Cypher queries implementing collaboration patterns."""
@@ -132,6 +145,8 @@ class CollaborationPatternCypher:
                   AND e_i.{s.event_start_prop} < e_l.{s.event_end_prop}
               }}
             WITH e_i, e_j, o, ro_i, ro_j, df, {transition_expr} AS transitionTime,
+              {s.pre_task_control_expr('ro_i', 'e_i')} AS fromTaskPreparationEvents,
+              {s.pre_task_control_expr('ro_j', 'e_j')} AS toTaskPreparationEvents,
               [(ro_i)<-[:CORR]-(ce:Event)
                 WHERE ce.Type = 'Control' AND ce.start IS NOT NULL AND ce.end IS NOT NULL
                   AND ce.start <= e_j.start AND e_i.end <= ce.end | ce] AS fromRobotControlEvents,
@@ -139,7 +154,8 @@ class CollaborationPatternCypher:
                 WHERE ce.Type = 'Control' AND ce.start IS NOT NULL AND ce.end IS NOT NULL
                   AND ce.start <= e_j.start AND e_i.end <= ce.end | ce] AS toRobotControlEvents
             RETURN e_i, e_j, o AS objective, ro_i AS fromRobot, ro_j AS toRobot,
-              transitionTime, fromRobotControlEvents, toRobotControlEvents,
+              transitionTime, fromTaskPreparationEvents, toTaskPreparationEvents,
+              fromRobotControlEvents, toRobotControlEvents,
               e_i.{s.event_activity_prop} AS fromActivity, e_j.{s.event_activity_prop} AS toActivity
             ORDER BY objective.{s.entity_id_prop}, e_i.{s.event_start_prop}
             """.strip()
@@ -189,11 +205,13 @@ class CollaborationPatternCypher:
                   AND {pred}
                   AND o_i <> o_j
                 WITH e_i, e_j, ro, o_i, o_j, df, {transition_expr} AS switchTime,
+                  {s.pre_task_control_expr('ro', 'e_i')} AS fromTaskPreparationEvents,
+                  {s.pre_task_control_expr('ro', 'e_j')} AS toTaskPreparationEvents,
                   [(ro)<-[:CORR]-(ce:Event)
                     WHERE ce.Type = 'Control' AND ce.start IS NOT NULL AND ce.end IS NOT NULL
                       AND ce.start <= e_j.start AND e_i.end <= ce.end | ce] AS controlEvents
                 RETURN e_i, e_j, ro AS robot, o_i AS fromObjective, o_j AS toObjective,
-                  switchTime, controlEvents,
+                  switchTime, fromTaskPreparationEvents, toTaskPreparationEvents, controlEvents,
                   e_i.{s.event_activity_prop} AS fromActivity, e_j.{s.event_activity_prop} AS toActivity
                 ORDER BY robot.{s.entity_id_prop}, e_i.{s.event_start_prop}
                 """.strip()
@@ -233,6 +251,9 @@ class CollaborationPatternCypher:
                 RETURN e_i, e_j, e_k, o AS objective,
                   ro_a AS returningRobot, ro_b AS intermediateRobot,
                   missingCapabilitiesForReturningRobot AS capabilities,
+                  {s.pre_task_control_expr('ro_a', 'e_i')} AS firstTaskPreparationEvents,
+                  {s.pre_task_control_expr('ro_b', 'e_j')} AS intermediateTaskPreparationEvents,
+                  {s.pre_task_control_expr('ro_a', 'e_k')} AS returnTaskPreparationEvents,
                   transitionToIntermediate, transitionBack,
                   e_j.{s.event_activity_prop} AS intermediateActivity,
                   intermediateDuration,
