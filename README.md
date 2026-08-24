@@ -1,6 +1,6 @@
 # Synthetic Multi-Robot Log Generator
 
-This package generates reproducible synthetic execution logs for the quantitative evaluation of OC-M3. The generator is an **evaluation instrument**, not a contribution of the paper: allocation strategies are treatments used to induce different organizational/collaboration behavior, while OC-M3 is evaluated on whether it can correctly instantiate and characterize that behavior.
+This package generates reproducible synthetic execution logs for the quantitative evaluation of OC-M3. The generator is an **evaluation instrument** to assess whether our proposal can correctly instantiate and characterize the collaborative behaviors.
 
 ## Evaluation design
 
@@ -85,7 +85,7 @@ The experiment root also contains:
 
 ### Latent ground truth
 
-Ground truth is computed directly from simulator state/events, not by querying the generated EKG. Its temporal directly-follows relation reproduces the interval semantics used by `init_ekg.py`.
+Ground truth is computed directly from the simulator state/events, not by querying the generated EKG. Its temporal directly-follows relation reproduces the interval semantics used by `init_ekg.py`.
 
 - `ground_truth_assignments.csv`: latent task-to-robot assignments.
 - `ground_truth_df.csv`: Mission, Segment, and Robot Task-DF relations.
