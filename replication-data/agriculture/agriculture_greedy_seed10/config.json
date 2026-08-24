@@ -1,0 +1,20 @@
+{
+  "allocation": "greedy",
+  "arrival_interval": 10.0,
+  "battery_threshold": 15.0,
+  "control_context": false,
+  "control_event_count": 648,
+  "event_count": 838,
+  "ground_truth_pattern_count": 801,
+  "missions": 20,
+  "out": "/Users/sara/Documents/Repo/OC-M3/replication-data/agriculture/agriculture_greedy_seed10",
+  "recharge_duration": 30.0,
+  "robots": 8,
+  "scenario": "agriculture",
+  "scenario_definition": "agriculture",
+  "seed": 10,
+  "segments_per_mission": 3,
+  "speed": 1.0,
+  "start_time": "2026-01-01T08:00:00",
+  "task_event_count": 190
+}

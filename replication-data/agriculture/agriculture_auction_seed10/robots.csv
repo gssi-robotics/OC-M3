@@ -1,0 +1,13 @@
+robot_id,capability
+r1,camera
+r1,gripper
+r2,sprayer
+r3,camera
+r3,sprayer
+r4,gripper
+r5,camera
+r5,gripper
+r6,sprayer
+r7,camera
+r7,sprayer
+r8,gripper

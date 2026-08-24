@@ -1,0 +1,6 @@
+objective_type,objective_id,event_i,event_j,event_k,returning_robot_id,intermediate_robot_id,reason_capability
+mission,m1,e157,e186,e169,r2,r8,gripper
+mission,m11,e532,e254,e540,r2,r3,camera
+mission,m19,e689,e407,e728,r6,r3,camera
+mission,m3,e297,e108,e387,r2,r7,camera
+segment,m11_s1,e250,e540,e599,r1,r2,sprayer

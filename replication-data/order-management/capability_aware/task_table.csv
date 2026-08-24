@@ -1,7 +1,0 @@
-case_study,task_name,required_capability,base_duration,exclusive_zone
-order_management,locate_item,vision,4,False
-order_management,move_to_dispatch,transport,8,True
-order_management,pack_item,packing,7,True
-order_management,pick_item,gripper,6,True
-order_management,scan_item,scanner,3,False
-order_management,seal_order,packing,5,True

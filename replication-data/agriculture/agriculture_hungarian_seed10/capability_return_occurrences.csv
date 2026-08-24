@@ -1,0 +1,13 @@
+objective_type,objective_id,event_i,event_j,event_k,returning_robot_id,intermediate_robot_id,reason_capability
+mission,m1,e157,e186,e169,r2,r8,gripper
+mission,m1,e186,e169,e277,r8,r2,sprayer
+mission,m4,e267,e293,e272,r4,r2,sprayer
+mission,m5,e225,e229,e335,r4,r6,sprayer
+mission,m5,e225,e257,e335,r4,r2,sprayer
+mission,m7,e318,e377,e475,r4,r6,sprayer
+mission,m7,e318,e381,e475,r4,r2,sprayer
+segment,m11_s1,e245,e557,e641,r1,r6,sprayer
+segment,m15_s1,e349,e628,e682,r1,r6,sprayer
+segment,m15_s3,e357,e658,e714,r5,r6,sprayer
+segment,m17_s3,e402,e672,e747,r1,r2,sprayer
+segment,m6_s2,e177,e385,e504,r5,r6,sprayer

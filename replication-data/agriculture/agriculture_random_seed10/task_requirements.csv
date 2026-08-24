@@ -1,0 +1,6 @@
+task_name,required_capability
+final_inspection,camera
+harvest,gripper
+inspect,camera
+spray,sprayer
+survey_field,camera

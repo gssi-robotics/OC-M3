@@ -1,6 +1,0 @@
-case_study,robot_id,capabilities,home_x,home_y
-order_management,wr_picker_1,vision;gripper;transport,0.00,0.00
-order_management,wr_picker_2,vision;gripper,2.00,1.00
-order_management,wr_scanner_1,scanner;vision,8.00,2.00
-order_management,wr_packer_1,packing;transport,10.00,8.00
-order_management,wr_amr_1,transport,3.00,9.00
