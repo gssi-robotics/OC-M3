@@ -105,6 +105,45 @@ def set_class_weight_query() -> str:
     """
 
 
+def set_class_entity_duration_query(choice: str) -> str:
+    """Annotate Classes with entity elapsed duration for one dimension."""
+    alias, property_name, class_property = AGGREGATION_OPTIONS[choice]
+    dimension = alias.capitalize()
+    duration_property = (
+        f"{dimension}_avg_total_duration_seconds"
+        if property_name == "type"
+        else f"{dimension}_total_duration_seconds"
+    )
+    instance_count_property = f"{dimension}_duration_instance_count"
+
+    return f"""
+    MATCH (c:Class)
+    WHERE c.{class_property} IS NOT NULL
+      AND c.{class_property} <> '<NO_SEGMENT>'
+    MATCH (entity:Entity {{type: '{dimension}'}})
+    WHERE toString(entity.{property_name}) = toString(c.{class_property})
+    CALL (entity) {{
+      MATCH (entity)<-[:CORR]-(event:Event)
+      WHERE event.start IS NOT NULL AND event.end IS NOT NULL
+      RETURN min(event.start) AS instance_start,
+             max(event.end) AS instance_end
+    }}
+    WITH c, entity,
+         CASE
+           WHEN instance_start IS NOT NULL AND instance_end IS NOT NULL
+           THEN toFloat(duration.inSeconds(instance_start, instance_end).seconds)
+           ELSE null
+         END AS instance_duration_seconds
+    WHERE instance_duration_seconds IS NOT NULL
+    WITH c,
+         count(DISTINCT entity) AS represented_instances,
+         avg(instance_duration_seconds) AS duration_seconds
+    SET c.{duration_property} = duration_seconds,
+        c.{instance_count_property} = represented_instances
+    RETURN count(c) AS annotated_classes
+    """
+
+
 def delete_class_graph_query() -> str:
     return "MATCH (c:Class) DETACH DELETE c"
 
@@ -121,6 +160,8 @@ def materialize_aggregation(
         class_record = session.run(
             create_class_query(mission_choice, robot_choice, segment_choice)
         ).single()
+        for choice in (mission_choice, robot_choice, segment_choice):
+            session.run(set_class_entity_duration_query(choice)).consume()
         dfc_record = session.run(class_df_aggregation_query()).single()
         weight_record = session.run(set_class_weight_query()).single()
 
@@ -130,6 +171,43 @@ def materialize_aggregation(
         "dfc_edges": int(dfc_record["dfc_count"] if dfc_record else 0),
         "weighted_classes": int(weight_record["weighted_classes"] if weight_record else 0),
     }
+
+
+def fetch_class_durations(
+    driver: Any,
+    database: Optional[str],
+    mission_choice: str,
+    robot_choice: str,
+    segment_choice: str,
+) -> List[Dict[str, Any]]:
+    duration_columns: List[str] = []
+    for choice in (mission_choice, robot_choice, segment_choice):
+        alias, property_name, class_property = AGGREGATION_OPTIONS[choice]
+        dimension = alias.capitalize()
+        duration_property = (
+            f"{dimension}_avg_total_duration_seconds"
+            if property_name == "type"
+            else f"{dimension}_total_duration_seconds"
+        )
+        measure = "average instance duration" if property_name == "type" else "instance duration"
+        duration_columns.extend([
+            f"c.{class_property} AS {alias}_group",
+            f"'{measure}' AS {alias}_duration_measure",
+            f"c.{dimension}_duration_instance_count AS {alias}_instances",
+            f"c.{duration_property} AS {alias}_duration_seconds",
+        ])
+
+    selected_columns = ",\n           ".join(duration_columns)
+    query = f"""
+    MATCH (c:Class)
+    RETURN c.Event_Id AS class_id,
+           c.activity AS activity,
+           c.Count AS observed_events,
+           {selected_columns}
+    ORDER BY activity, class_id
+    """
+    with driver.session(**neo4j_shared.session_kwargs(database)) as session:
+        return [dict(record) for record in session.run(query)]
 
 
 def fetch_class_graph(

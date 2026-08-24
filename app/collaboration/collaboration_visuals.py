@@ -321,39 +321,7 @@ def add_structural_overlays(
         kind = highlight["kind"]
         label = highlight.get("label", pattern_short(pattern_name))
 
-        if kind == "segment_team":
-            segment = highlight["segment"]
-            ext = extents.get(segment)
-            if ext:
-                x0 = relative_seconds(float(ext["start_ms"]), min_ms)
-                x1 = relative_seconds(float(ext["end_ms"]), min_ms)
-                fig.add_vrect(
-                    x0=x0,
-                    x1=x1,
-                    fillcolor=color,
-                    opacity=0.00,
-                    line=dict(color=color, width=2, dash="dash"),
-                    annotation_text=f"CP {label}",
-                    annotation_position="top right",
-                )
-                rows.append({"kind": "co-participation", "scope": segment, "pattern": pattern_name, "label": label})
-
-        elif kind == "mission_team":
-            fig.add_annotation(
-                x=0.01,
-                y=1.08,
-                xref="paper",
-                yref="paper",
-                text=f"CP {label}",
-                showarrow=False,
-                bgcolor="white",
-                bordercolor=color,
-                borderwidth=2,
-                font=dict(color=color, size=12),
-            )
-            rows.append({"kind": "co-participation", "scope": "mission", "pattern": pattern_name, "label": label})
-
-        elif kind == "parallel_segments":
+        if kind == "parallel_segments":
             segment1 = highlight["segment1"]
             segment2 = highlight["segment2"]
             extent1 = extents.get(segment1)

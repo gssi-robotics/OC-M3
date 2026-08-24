@@ -160,31 +160,6 @@ class CollaborationPatternCypher:
             ORDER BY objective.{s.entity_id_prop}, e_i.{s.event_start_prop}
             """.strip()
 
-    def co_participation(self, objective_type: str = "Mission") -> str:
-        """Co-participation as one occurrence per objective with its unique team.
-
-        Returns tuples: <objective, team>, with team size, objective duration,
-        and event-distribution metrics. This avoids generating all pairwise
-        robot combinations.
-        """
-        s = self.s
-        objective_duration = s.seconds_between("objectiveStart", "objectiveEnd")
-        return f"""
-              MATCH {s.entity('o')}<-{s.rel(s.corr_rel)}-{s.event('e')}
-              WHERE {s.type_filter('o', objective_type)}
-              WITH o, collect(DISTINCT e) AS objectiveEvents, min(e.{s.event_start_prop}) AS objectiveStart, max(e.{s.event_end_prop}) AS objectiveEnd
-              MATCH {s.entity('o')}<-{s.rel(s.corr_rel)}-{s.event('e_by_robot')}-{s.rel(s.corr_rel)}->{s.entity('ro')}
-              WHERE {s.type_filter('ro', 'Robot')}
-              WITH o, objectiveEvents, objectiveStart, objectiveEnd, ro, count(DISTINCT e_by_robot) AS eventsByRobot
-              WITH o, objectiveEvents, objectiveStart, objectiveEnd, collect(ro) AS team,
-                collect({{robot: ro, events: eventsByRobot}}) AS robotEventStats,
-                count(ro) AS teamSize, max(eventsByRobot) AS maxEventsPerRobot
-              WHERE teamSize > 1
-              RETURN o AS objective, team, teamSize, {objective_duration} AS objectiveDuration,
-                toFloat(size(objectiveEvents)) / teamSize AS avgEventsPerRobot, maxEventsPerRobot, robotEventStats
-              ORDER BY objective.{s.entity_id_prop}
-              """.strip()
-
     def objective_switch(self, objective_type: str = "Mission") -> str:
         """Objective switch over the robot perspective.
 
@@ -394,45 +369,56 @@ class CollaborationPatternCypher:
     # ------------------------------------------------------------------
 
     def handover_diagnostics_by_objective(self, objective_type: str = "Mission") -> str:
-        """Count, rate, and average transition time for handovers by objective."""
+        """Handover frequency normalized by behavioral opportunities.
+
+        ``handoverIntensity`` is the fraction of objective-perspective Task DF
+        transitions that instantiate the handover pattern. Temporal transition
+        values are reported separately and are never used as the denominator.
+        """
         occurrence_query = self.robot_handover(objective_type)
         s = self.s
-        obs_time_expr = s.seconds_between("objectiveStart", "objectiveEnd")
         return f"""
               CALL () {{{_indent(occurrence_query, 2)}}}
-              WITH objective, count(*) AS count, avg(transitionTime) AS avgTransitionTime
-              MATCH {s.entity('objective')}<-{s.rel(s.corr_rel)}-{s.event('e')}
-              WHERE {s.event_type_filter('e', 'Task')}
-              WITH objective, count, avgTransitionTime,
-                min(e.{s.event_start_prop}) AS objectiveStart,
-                max(e.{s.event_end_prop}) AS objectiveEnd
-              WITH objective, count, avgTransitionTime, {obs_time_expr} AS obsTime
-              RETURN objective, count, avgTransitionTime, obsTime,
-                CASE WHEN obsTime = 0 THEN null ELSE toFloat(count) / obsTime END AS rate
-              ORDER BY count DESC
+              WITH objective, count(*) AS handoverCount, avg(transitionTime) AS avgTransitionTime
+              MATCH {s.entity('objective')}<-{s.rel(s.corr_rel)}-{s.event('a')}-{s.rel(s.df_rel, 'objectiveDf')}->{s.event('b')}
+              MATCH {s.event('b')}-{s.rel(s.corr_rel)}->(objective)
+              WHERE {s.event_type_filter('a', 'Task')} AND {s.event_type_filter('b', 'Task')}
+                AND {s.df_perspective_predicate('objectiveDf', 'objective', objective_type)}
+              WITH objective, handoverCount, avgTransitionTime, count(DISTINCT objectiveDf) AS transitionOpportunities
+              RETURN objective, handoverCount, transitionOpportunities,
+                CASE WHEN transitionOpportunities = 0 THEN null
+                  ELSE toFloat(handoverCount) / transitionOpportunities END AS handoverIntensity,
+                avgTransitionTime
+              ORDER BY handoverIntensity DESC, handoverCount DESC
               """.strip()
 
     def switch_diagnostics_by_robot(self, objective_type: str = "Mission") -> str:
-        """Count, rate, and average switch time for objective switches by robot."""
+        """Objective-switch frequency normalized by robot Task transitions."""
         occurrence_query = self.objective_switch(objective_type)
         s = self.s
-        active_time = s.seconds_between("robotStart", "robotEnd")
         return f"""
             CALL () {{{_indent(occurrence_query, 2)}}}
-            WITH robot, count(*) AS count, avg(switchTime) AS avgSwitchTime
-            MATCH {s.entity('robot')}<-{s.rel(s.corr_rel)}-{s.event('e')}
-            WHERE {s.event_type_filter('e', 'Task')}
-            WITH robot, count, avgSwitchTime,
-              min(e.{s.event_start_prop}) AS robotStart,
-              max(e.{s.event_end_prop}) AS robotEnd
-            WITH robot, count, avgSwitchTime, {active_time} AS activeTime
-            RETURN robot, count, avgSwitchTime, activeTime,
-              CASE WHEN activeTime = 0 THEN null ELSE toFloat(count) / activeTime END AS rate
-            ORDER BY count DESC
+            WITH robot, count(*) AS switchCount, avg(switchTime) AS avgSwitchTime
+            MATCH {s.entity('robot')}<-{s.rel(s.corr_rel)}-{s.event('a')}-{s.rel(s.df_rel, 'robotDf')}->{s.event('b')}
+            MATCH {s.event('b')}-{s.rel(s.corr_rel)}->(robot)
+            WHERE {s.event_type_filter('a', 'Task')} AND {s.event_type_filter('b', 'Task')}
+              AND {s.df_perspective_predicate('robotDf', 'robot', 'Robot')}
+            WITH robot, switchCount, avgSwitchTime, count(DISTINCT robotDf) AS transitionOpportunities
+            RETURN robot, switchCount, transitionOpportunities,
+              CASE WHEN transitionOpportunities = 0 THEN null
+                ELSE toFloat(switchCount) / transitionOpportunities END AS switchIntensity,
+              avgSwitchTime
+            ORDER BY switchIntensity DESC, switchCount DESC
             """.strip()
 
     def cap_return_diagnostics_by_capability(self, objective_type: str = "Mission") -> str:
-        """Count, pressure, and average return time by capability."""
+        """Capability-return count with provider availability and temporal impact.
+
+        No synthetic ``pressure`` ratio is produced: return count/provider count
+        mixes event frequency with a structural resource denominator. Capability
+        demand per provider is computed independently by
+        :meth:`capability_demand_availability`.
+        """
         occurrence_query = self.capability_driven_return(objective_type)
         s = self.s
         return f"""
@@ -441,11 +427,9 @@ class CollaborationPatternCypher:
               WITH capability, count(*) AS capReturnCount, avg(returnTime) AS avgReturnTime
               MATCH {s.entity('ro')}-{s.rel(s.has_rel)}->(capability)
               WHERE {s.type_filter('ro', 'Robot')}
-              WITH capability, capReturnCount, avgReturnTime, count(DISTINCT ro) AS availability
-              RETURN capability, capReturnCount, availability,
-                CASE WHEN availability = 0 THEN null ELSE toFloat(capReturnCount) / availability END AS capPressure,
-                avgReturnTime
-              ORDER BY capPressure DESC, capReturnCount DESC
+              WITH capability, capReturnCount, avgReturnTime, count(DISTINCT ro) AS providerCount
+              RETURN capability, capReturnCount, providerCount, avgReturnTime
+              ORDER BY capReturnCount DESC, providerCount ASC
               """.strip()
 
     def allocation_continuity(self, objective_type: str = "Mission") -> str:
@@ -470,7 +454,13 @@ class CollaborationPatternCypher:
               """.strip()
 
     def resource_participation(self, objective_type: str = "Mission") -> str:
-        """Team size and task-duration workload share by objective and robot."""
+        """Frequency-based participation and duration-based robot effort.
+
+        ``taskShare`` measures the fraction of objective Task executions assigned
+        to a robot. ``effortShare`` uses summed robot-seconds and is explicitly an
+        effort measure; it is not objective elapsed time and may include
+        concurrent robot work.
+        """
         s = self.s
         event_duration = s.seconds_between(f"e.{s.event_start_prop}", f"e.{s.event_end_prop}")
         return f"""
@@ -479,19 +469,26 @@ class CollaborationPatternCypher:
                 AND {s.event_type_filter('e', 'Task')}
               WITH objective, robot, collect(DISTINCT e) AS robotEvents
               UNWIND robotEvents AS e
-              WITH objective, robot, sum({event_duration}) AS workloadSeconds
-              WITH objective, collect({{robot: robot, workloadSeconds: workloadSeconds}}) AS participation,
-                count(robot) AS teamSize, sum(workloadSeconds) AS totalWorkloadSeconds
+              WITH objective, robot, count(DISTINCT e) AS robotTaskCount,
+                sum({event_duration}) AS robotEffortSeconds
+              WITH objective,
+                collect({{robot: robot, robotTaskCount: robotTaskCount, robotEffortSeconds: robotEffortSeconds}}) AS participation,
+                count(robot) AS teamSize,
+                sum(robotTaskCount) AS totalTaskCount,
+                sum(robotEffortSeconds) AS totalRobotEffortSeconds
               UNWIND participation AS item
               RETURN objective, item.robot AS robot, teamSize,
-                item.workloadSeconds AS workloadSeconds, totalWorkloadSeconds,
-                CASE WHEN totalWorkloadSeconds = 0 THEN null
-                  ELSE toFloat(item.workloadSeconds) / totalWorkloadSeconds END AS workloadShare
-              ORDER BY objective.{s.entity_id_prop}, workloadShare DESC
+                item.robotTaskCount AS robotTaskCount, totalTaskCount,
+                CASE WHEN totalTaskCount = 0 THEN null
+                  ELSE toFloat(item.robotTaskCount) / totalTaskCount END AS taskShare,
+                item.robotEffortSeconds AS robotEffortSeconds, totalRobotEffortSeconds,
+                CASE WHEN totalRobotEffortSeconds = 0 THEN null
+                  ELSE toFloat(item.robotEffortSeconds) / totalRobotEffortSeconds END AS effortShare
+              ORDER BY objective.{s.entity_id_prop}, effortShare DESC
               """.strip()
 
     def capability_demand_availability(self, objective_type: str = "Mission") -> str:
-        """Requirement count, provider availability, and their ratio per objective."""
+        """Task demand per provider for each capability and objective."""
         s = self.s
         return f"""
               MATCH {s.entity('objective')}<-{s.rel(s.corr_rel)}-{s.event('e')}-{s.rel(s.req_rel)}->{s.capability('capability')}
@@ -503,8 +500,45 @@ class CollaborationPatternCypher:
                 collect(DISTINCT provider) AS providers, count(DISTINCT provider) AS availability
               RETURN objective, capability, requirementCount, providers, availability,
                 CASE WHEN availability = 0 THEN null
-                  ELSE toFloat(requirementCount) / availability END AS demandAvailabilityRatio
-              ORDER BY demandAvailabilityRatio DESC, requirementCount DESC
+                  ELSE toFloat(requirementCount) / availability END AS demandPerProvider
+              ORDER BY demandPerProvider DESC, requirementCount DESC
+              """.strip()
+
+    def objective_performance(self, objective_type: str = "Mission") -> str:
+        """Objective-level process performance and operational effort measures."""
+        s = self.s
+        task_duration = s.seconds_between(f"task.{s.event_start_prop}", f"task.{s.event_end_prop}")
+        return f"""
+              MATCH {s.entity('objective')}<-{s.rel(s.corr_rel)}-{s.event('task')}
+              WHERE {s.type_filter('objective', objective_type)}
+                AND {s.event_type_filter('task', 'Task')}
+                AND task.{s.event_start_prop} IS NOT NULL AND task.{s.event_end_prop} IS NOT NULL
+              OPTIONAL MATCH (task)-{s.rel(s.corr_rel)}->{s.entity('robot')}
+              WHERE {s.type_filter('robot', 'Robot')}
+              WITH objective, collect(DISTINCT task) AS tasks, collect(DISTINCT robot) AS robots,
+                min(task.{s.event_start_prop}) AS objectiveStart,
+                max(task.{s.event_end_prop}) AS objectiveEnd
+              UNWIND tasks AS task
+              WITH objective, robots, objectiveStart, objectiveEnd, tasks,
+                count(DISTINCT task) AS taskCount, sum({task_duration}) AS taskEffortSeconds
+              WITH objective, robots, objectiveStart, objectiveEnd, taskCount, taskEffortSeconds,
+                {s.seconds_between('objectiveStart', 'objectiveEnd')} AS throughputSeconds
+              RETURN objective, taskCount, size(robots) AS teamSize, throughputSeconds,
+                taskEffortSeconds,
+                CASE WHEN throughputSeconds = 0 THEN null
+                  ELSE toFloat(taskEffortSeconds) / throughputSeconds END AS taskEffortToElapsedRatio
+              ORDER BY throughputSeconds DESC
+              """.strip()
+
+    def robot_handover_network(self, objective_type: str = "Mission") -> str:
+        """Directed organizational network induced by formal handover occurrences."""
+        occurrence_query = self.robot_handover(objective_type)
+        return f"""
+              CALL () {{{_indent(occurrence_query, 2)}}}
+              WITH fromRobot, toRobot, count(*) AS handoverCount,
+                avg(transitionTime) AS avgTransitionTime
+              RETURN fromRobot, toRobot, handoverCount, avgTransitionTime
+              ORDER BY handoverCount DESC
               """.strip()
 
     def all_occurrence_queries(self, objective_type: str = "Mission") -> Dict[str, str]:
@@ -526,6 +560,8 @@ class CollaborationPatternCypher:
             f"allocation_continuity_{objective_type.lower()}": self.allocation_continuity(objective_type),
             f"resource_participation_{objective_type.lower()}": self.resource_participation(objective_type),
             f"capability_demand_availability_{objective_type.lower()}": self.capability_demand_availability(objective_type),
+            f"objective_performance_{objective_type.lower()}": self.objective_performance(objective_type),
+            f"robot_handover_network_{objective_type.lower()}": self.robot_handover_network(objective_type),
             "sync_diagnostics_parallel_segments": self.synchronization_diagnostics_parallel_segments(),
         }
 

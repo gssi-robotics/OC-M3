@@ -123,23 +123,6 @@ def _capability_return_match_fragment(objective_type: str) -> str:
     """.strip()
 
 
-def _co_participation_match_fragment() -> str:
-    return f"""
-        MATCH (o:Entity {{type: $objective_type}})<-[:{CORR_REL}]-(e:Event)-[:{CORR_REL}]->(robot:Entity {{type: 'Robot'}})
-        MATCH (e)-[:{OBS_REL}]->(c:Class)
-        WITH o, collect(DISTINCT robot) AS team, collect(DISTINCT {{event:e, class:c}}) AS items
-        WHERE size(team) > 1
-        UNWIND items AS item
-        WITH o, team, item ORDER BY item.event.start, item.event.end
-        WITH o, team, collect(item) AS ordered
-        WITH o, team, ordered,
-             head(ordered).class AS c1,
-             last(ordered).class AS c2,
-             CASE WHEN head(ordered).event.start IS NOT NULL AND last(ordered).event.end IS NOT NULL
-                  THEN duration.inSeconds(head(ordered).event.start, last(ordered).event.end).seconds END AS duration_seconds
-    """.strip()
-
-
 def _parallel_collaboration_match_fragment(objective_type: str) -> str:
     same_mission_match = ""
     if objective_type == "Segment":

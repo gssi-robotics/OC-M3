@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from numbers import Number
+from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 
 import neo4j_shared
-from ekg.aggregation_data import fetch_class_graph, materialize_aggregation
+from collaboration.collaboration_utils import format_seconds, table_safe_rows
+from ekg.aggregation_data import fetch_class_durations, fetch_class_graph, materialize_aggregation
 from ekg.aggregation_visuals import render_class_dfg_panel
 
 
@@ -15,6 +17,7 @@ def clear_state() -> None:
         "agg_error",
         "agg_rows",
         "agg_result",
+        "agg_class_durations",
     ):
         st.session_state.pop(key, None)
 
@@ -93,6 +96,13 @@ def _render_aggregation_controls(connection: Dict[str, str]) -> None:
                 robot_choice,
                 segment_choice,
             )
+            st.session_state["agg_class_durations"] = fetch_class_durations(
+                driver,
+                connection["database"],
+                mission_choice,
+                robot_choice,
+                segment_choice,
+            )
             st.session_state.pop("agg_rows", None)
         except Exception as exc:  # noqa: BLE001
             st.error(f"Could not create the aggregated graph: {exc}")
@@ -109,6 +119,54 @@ def _render_aggregation_summary() -> None:
     c1.metric("Class nodes", result["classes"])
     c2.metric("Observed events", result["observed_events"])
     c3.metric("DF_C edges", result["dfc_edges"])
+
+    duration_rows = st.session_state.get("agg_class_durations", [])
+    if duration_rows:
+        duration_columns = st.columns(3)
+        for column, dimension in zip(duration_columns, ("mission", "robot", "segment")):
+            duration, instances = _overall_entity_duration(duration_rows, dimension)
+            with column:
+                st.metric(
+                    f"Avg {dimension.capitalize()} duration",
+                    format_seconds(duration) or "n/a",
+                )
+                st.caption(f"Across {instances:,} represented {dimension} instances")
+
+    st.markdown("#### Class entity durations")
+    st.caption(
+        "ID dimensions show the elapsed duration of the concrete entity. Type dimensions show the average "
+        "elapsed duration across represented entity instances. Each duration spans the first correlated "
+        "event start to the last correlated event end."
+    )
+    if duration_rows:
+        st.dataframe(table_safe_rows(duration_rows), width="stretch", hide_index=True)
+    else:
+        st.info("Create the aggregated graph to calculate Class entity durations.")
+
+
+def _overall_entity_duration(
+    rows: List[Dict[str, Any]],
+    dimension: str,
+) -> Tuple[Optional[float], int]:
+    """Average over unique groups without weighting repeated activity Classes."""
+    groups: Dict[str, Tuple[float, int]] = {}
+    for row in rows:
+        group = str(row.get(f"{dimension}_group") or "")
+        duration = row.get(f"{dimension}_duration_seconds")
+        instances = row.get(f"{dimension}_instances")
+        if not group or not isinstance(duration, Number):
+            continue
+        instance_count = int(instances) if isinstance(instances, Number) else 1
+        groups[group] = (float(duration), max(1, instance_count))
+
+    represented_instances = sum(instance_count for _, instance_count in groups.values())
+    if represented_instances == 0:
+        return None, 0
+    weighted_duration = sum(
+        duration * instance_count
+        for duration, instance_count in groups.values()
+    )
+    return weighted_duration / represented_instances, represented_instances
 
 
 def _render_class_dfg_controls(connection: Dict[str, str]) -> None:

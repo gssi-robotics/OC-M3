@@ -204,30 +204,6 @@ def build_occurrence_lane_graph(pattern: str, occurrence: Dict[str, Any], index:
             fontcolor=color,
             penwidth="3.8",
         )
-    elif pattern == "Co-participation":
-        activities = occurrence.get("activities") or []
-        robots = occurrence.get("robots") or []
-        previous = None
-        _lane_node(dot, f"team_{index}", "Team " + " | ".join(map(str, robots)))
-        for pos, activity in enumerate(activities):
-            node_id = f"cp_{index}_{pos}"
-            meta = None
-            events = occurrence.get("events") or []
-            if pos < len(events):
-                meta = f"event {events[pos]}"
-            _activity_node(dot, node_id, _event_label(activity, meta), color)
-            if previous is None:
-                dot.edge(f"team_{index}", node_id, style="dashed", color=CONTEXT_COLOR, arrowhead="none")
-            else:
-                dot.edge(previous, node_id, color=color, penwidth="2.8")
-            previous = node_id
-        if previous is not None:
-            dot.attr(
-                label=f"Co-participation | team size {occurrence.get('team_size', '?')} | duration {format_seconds(occurrence.get('duration_seconds'))}",
-                labelloc="t",
-                fontsize="12",
-                fontcolor=color,
-            )
     else:
         left = f"left_{index}"
         right = f"right_{index}"

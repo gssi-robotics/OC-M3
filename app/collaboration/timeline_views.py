@@ -99,7 +99,10 @@ def _midpoint(left: Dict[str, Any], right: Dict[str, Any]) -> float:
 def _mission_bounds(events: List[Dict[str, Any]]) -> Tuple[float, float]:
     if not events:
         return 0.0, 1.0
-    return 0.0, max(float(event["end_s"]) for event in events)
+    return (
+        min(float(event["start_s"]) for event in events),
+        max(float(event["end_s"]) for event in events),
+    )
 
 def prepare_events_for_multi_mission_timeline(
     mission_events_by_id: Mapping[str, List[Dict[str, Any]]],
@@ -157,7 +160,7 @@ def _is_event_link_short(short: str) -> bool:
     return short in {"HO", "SW", "CR"}
 
 def _is_structural_short(short: str) -> bool:
-    return short in {"CP", "PC", "SYNC"}
+    return short in {"PC", "SYNC"}
 
 def _item_visible(short: str, emphasis_mode: str) -> bool:
     if emphasis_mode == "Structural patterns only":
@@ -173,16 +176,10 @@ def _opacity_for_kind(short: str, emphasis_mode: str, base: float = 1.0) -> floa
         return base if _is_structural_short(short) else 0.0
     if emphasis_mode == "Event-to-event patterns only":
         return base if _is_event_link_short(short) else 0.0
-    if emphasis_mode == "Highlight co-participation":
-        if short == "CP":
-            return base
-        if short in {"PC", "SYNC"}:
-            return min(base, 0.45)
-        return min(base, 0.25)
     if emphasis_mode == "Highlight parallel collaboration":
         if short == "PC":
             return base
-        if short in {"CP", "SYNC"}:
+        if short == "SYNC":
             return min(base, 0.45)
         return min(base, 0.25)
     return base
@@ -268,62 +265,15 @@ def _structural_badges_for_mission(
     structural_highlights: List[Dict[str, Any]],
     base_ms: float,
 ) -> List[Dict[str, Any]]:
-    """Convert CP/PC/SYNC highlights into compact badge items for overview or objective context."""
+    """Convert parallel/synchronization highlights into compact timeline badges."""
     badges: List[Dict[str, Any]] = []
     raw_by_event = {str(event.get("event_id")): event for event in raw_events}
     extents = segment_extents(raw_events)
-    mission_x0, mission_x1 = _mission_time_bounds_from_raw(raw_events, base_ms)
-
     for highlight in structural_highlights:
         row = highlight.get("row", {})
         pattern_name = str(highlight.get("pattern_name", ""))
         kind = str(highlight.get("kind", ""))
-        if kind == "mission_team":
-            x = (mission_x0 + mission_x1) / 2.0
-            badges.append({
-                "short": "CP",
-                "pattern_name": pattern_name,
-                "x": x,
-                "row_label": f"Mission {mission_id}",
-                "label": f"CP team={row.get('teamSize', '?')}",
-                "hover": _hover_html(
-                    "Co-participation",
-                    [
-                        ("mission", mission_id),
-                        ("teamSize", row.get("teamSize")),
-                        ("objectiveDuration", format_seconds(row.get("objectiveDuration"))),
-                        ("avgEventsPerRobot", row.get("avgEventsPerRobot")),
-                        ("maxEventsPerRobot", row.get("maxEventsPerRobot")),
-                    ],
-                    row,
-                ),
-            })
-        elif kind == "segment_team":
-            segment = str(highlight.get("segment", ""))
-            ext = extents.get(segment)
-            if ext:
-                x0 = relative_seconds(float(ext["start_ms"]), base_ms)
-                x1 = relative_seconds(float(ext["end_ms"]), base_ms)
-                badges.append({
-                    "short": "CP",
-                    "pattern_name": pattern_name,
-                    "x": (x0 + x1) / 2.0,
-                    "row_label": f"Segment {segment}",
-                    "label": f"CP team={row.get('teamSize', '?')}",
-                    "hover": _hover_html(
-                        "Co-participation",
-                        [
-                            ("mission", mission_id),
-                            ("segment", segment),
-                            ("teamSize", row.get("teamSize")),
-                            ("objectiveDuration", format_seconds(row.get("objectiveDuration"))),
-                            ("avgEventsPerRobot", row.get("avgEventsPerRobot")),
-                            ("maxEventsPerRobot", row.get("maxEventsPerRobot")),
-                        ],
-                        row,
-                    ),
-                })
-        elif kind == "parallel_segments":
+        if kind == "parallel_segments":
             segment1 = str(highlight.get("segment1", ""))
             segment2 = str(highlight.get("segment2", ""))
             extent1 = extents.get(segment1)
@@ -354,19 +304,23 @@ def _structural_badges_for_mission(
         elif kind == "sync":
             downstream_id = str(highlight.get("downstream_event_id", ""))
             downstream = raw_by_event.get(downstream_id)
-            if downstream:
+            segment1 = str(highlight.get("segment1", ""))
+            segment2 = str(highlight.get("segment2", ""))
+            if downstream and segment1 and segment2:
                 x = relative_seconds(float(downstream["start_ms"]), base_ms)
                 sync_delay = format_seconds(row.get("syncDelay"))
                 badges.append({
                     "short": "SYNC",
                     "pattern_name": pattern_name,
                     "x": x,
-                    "row_label": f"Mission {mission_id}",
-                    "label": f"SYNC {sync_delay}" if sync_delay else "SYNC",
+                    "row_label": f"Segment {segment1}",
+                    "label": f"SYNC {segment1} + {segment2}",
                     "hover": _hover_html(
-                        "Synchronization point",
+                        "Segment synchronization point",
                         [
                             ("mission", mission_id),
+                            ("segment1", segment1),
+                            ("segment2", segment2),
                             ("downstream_event", downstream_id),
                             ("downstream_activity", downstream.get("activity")),
                             ("syncDelay", sync_delay),
@@ -886,10 +840,11 @@ def render_robot_event_timeline_plotly(
     edge_colors = pattern_color_map(pattern_names_for_colors)
     fig = go.Figure()
 
-    event_opacity = 0.75 if emphasis_mode in {"Highlight co-participation", "Highlight parallel collaboration"} else 1.0
+    event_opacity = 0.75 if emphasis_mode == "Highlight parallel collaboration" else 1.0
     by_segment: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for event in events:
-        by_segment[str(event.get("segment_id") or "mission-level")].append(event)
+        if str(event.get("event_type") or "Task") == "Task":
+            by_segment[str(event.get("segment_id") or "mission-level")].append(event)
 
     for segment_id, segment_events in by_segment.items():
         color = segment_colors.get(segment_id, "#CBD5E1")
@@ -910,6 +865,7 @@ def render_robot_event_timeline_plotly(
                 [
                     event["event_id"],
                     event["activity"],
+                    event.get("event_type") or "Task",
                     event["robot_id"],
                     event.get("segment_id") or "",
                     event.get("mission_id") or "",
@@ -922,12 +878,51 @@ def render_robot_event_timeline_plotly(
             hovertemplate=(
                 "<b>%{customdata[1]}</b><br>"
                 "event_id: %{customdata[0]}<br>"
+                "event_type: %{customdata[2]}<br>"
+                "robot_id: %{customdata[3]}<br>"
+                "segment_id: %{customdata[4]}<br>"
+                "mission_id: %{customdata[5]}<br>"
+                "start: %{customdata[6]}<br>"
+                "end: %{customdata[7]}<br>"
+                "duration_s: %{customdata[8]:.3f}<extra></extra>"
+            ),
+        ))
+
+    control_events = [event for event in events if str(event.get("event_type") or "Task") == "Control"]
+    if control_events:
+        fig.add_trace(go.Bar(
+            name="Control events",
+            y=[y_map[str(event["robot_id"])] for event in control_events],
+            x=[float(event["duration_s"]) for event in control_events],
+            base=[float(event["start_s"]) for event in control_events],
+            orientation="h",
+            width=0.38,
+            marker=dict(color="#DBEAFE", opacity=0.92, line=dict(color="#2563EB", width=1.5)),
+            text=[event["activity_short"] if show_activity_labels and float(event["duration_s"]) >= 1.0 else "" for event in control_events],
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(size=9, color="#1E3A8A"),
+            customdata=[
+                [
+                    event["event_id"],
+                    event["activity"],
+                    event["robot_id"],
+                    event.get("mission_id") or "",
+                    event["start_text"],
+                    event["end_text"],
+                    float(event["duration_s"]),
+                ]
+                for event in control_events
+            ],
+            hovertemplate=(
+                "<b>%{customdata[1]}</b><br>"
+                "event_id: %{customdata[0]}<br>"
+                "event_type: Control<br>"
                 "robot_id: %{customdata[2]}<br>"
-                "segment_id: %{customdata[3]}<br>"
-                "mission_id: %{customdata[4]}<br>"
-                "start: %{customdata[5]}<br>"
-                "end: %{customdata[6]}<br>"
-                "duration_s: %{customdata[7]:.3f}<extra></extra>"
+                "mission_id: %{customdata[3]}<br>"
+                "start: %{customdata[4]}<br>"
+                "end: %{customdata[5]}<br>"
+                "duration_s: %{customdata[6]:.3f}<extra></extra>"
             ),
         ))
 
@@ -1079,13 +1074,14 @@ def render_mission_context_layer_plotly(
     emphasis_mode: str,
     large_view: bool,
 ) -> Any:
-    """Mission + segment context layer with compact CP/PC/SYNC badges, no background bands."""
+    """Mission and segment context with parallel and synchronization markers."""
     go, _ = _plotly_required()
     extents = segment_extents(events)
     segment_ids = sorted(extents)
     row_labels = [f"Mission {mission_id}"] + [f"Segment {segment_id}" for segment_id in segment_ids]
     y_map = {label: index for index, label in enumerate(reversed(row_labels))}
     fig = go.Figure()
+    timeline_base_ms = float(events[0]["start_ms"]) - (float(events[0]["start_s"]) * 1000.0)
 
     mission_x0, mission_x1 = _mission_bounds(events)
     fig.add_trace(go.Bar(
@@ -1102,8 +1098,8 @@ def render_mission_context_layer_plotly(
     ))
 
     for segment_id, ext in extents.items():
-        x0 = relative_seconds(float(ext["start_ms"]), mission_span(events)[0])
-        x1 = relative_seconds(float(ext["end_ms"]), mission_span(events)[0])
+        x0 = relative_seconds(float(ext["start_ms"]), timeline_base_ms)
+        x1 = relative_seconds(float(ext["end_ms"]), timeline_base_ms)
         color = segment_colors.get(segment_id, "#94A3B8")
         row_label = f"Segment {segment_id}"
         fig.add_trace(go.Bar(
@@ -1119,31 +1115,12 @@ def render_mission_context_layer_plotly(
             hovertemplate="%{customdata[0]}<extra></extra>",
         ))
 
-    # CP and PC as badges only; SYNC as a vertical marker.
+    # Parallel collaboration uses badges; synchronization uses a vertical marker.
     for highlight in structural_highlights:
         kind = str(highlight.get("kind", ""))
         row = highlight.get("row", {})
         pattern_name = str(highlight.get("pattern_name", ""))
-        if kind == "mission_team":
-            if not _item_visible("CP", emphasis_mode):
-                continue
-            x = (mission_x0 + mission_x1) / 2.0
-            y = y_map[f"Mission {mission_id}"] + 0.23
-            hover = _hover_html("Co-participation", [("mission", mission_id), ("teamSize", row.get("teamSize")), ("objectiveDuration", format_seconds(row.get("objectiveDuration")))], row)
-            fig.add_trace(go.Scatter(x=[x], y=[y], mode="markers+text", marker=dict(color="white", size=13, symbol="square", line=dict(color="#7C3AED", width=2)), text=[f"CP team={row.get('teamSize', '?')}"], textposition="middle right", textfont=dict(color="#7C3AED", size=9), customdata=[[hover]], hovertemplate="%{customdata[0]}<extra></extra>", showlegend=False))
-        elif kind == "segment_team":
-            if not _item_visible("CP", emphasis_mode):
-                continue
-            segment_id = str(highlight.get("segment", ""))
-            ext = extents.get(segment_id)
-            if not ext:
-                continue
-            x0 = relative_seconds(float(ext["start_ms"]), mission_span(events)[0])
-            x1 = relative_seconds(float(ext["end_ms"]), mission_span(events)[0])
-            row_label = f"Segment {segment_id}"
-            hover = _hover_html("Co-participation", [("segment", segment_id), ("teamSize", row.get("teamSize")), ("objectiveDuration", format_seconds(row.get("objectiveDuration"))), ("avgEventsPerRobot", row.get("avgEventsPerRobot")), ("maxEventsPerRobot", row.get("maxEventsPerRobot"))], row)
-            fig.add_trace(go.Scatter(x=[(x0 + x1) / 2.0], y=[y_map[row_label] + 0.23], mode="markers+text", marker=dict(color="white", size=13, symbol="square", line=dict(color="#7C3AED", width=2)), text=[f"CP team={row.get('teamSize', '?')}"], textposition="middle right", textfont=dict(color="#7C3AED", size=9), customdata=[[hover]], hovertemplate="%{customdata[0]}<extra></extra>", showlegend=False))
-        elif kind == "parallel_segments":
+        if kind == "parallel_segments":
             if not _item_visible("PC", emphasis_mode):
                 continue
             segment1 = str(highlight.get("segment1", ""))
@@ -1156,7 +1133,7 @@ def render_mission_context_layer_plotly(
             overlap_end = min(float(extent1["end_ms"]), float(extent2["end_ms"]))
             if overlap_start >= overlap_end:
                 continue
-            x = relative_seconds((overlap_start + overlap_end) / 2.0, mission_span(events)[0])
+            x = relative_seconds((overlap_start + overlap_end) / 2.0, timeline_base_ms)
             y1 = y_map.get(f"Segment {segment1}")
             y2 = y_map.get(f"Segment {segment2}")
             if y1 is None or y2 is None:
@@ -1170,10 +1147,47 @@ def render_mission_context_layer_plotly(
             downstream = _event_lookup(events).get(str(highlight.get("downstream_event_id", "")))
             if not downstream:
                 continue
+            segment1 = str(highlight.get("segment1", ""))
+            segment2 = str(highlight.get("segment2", ""))
+            y1 = y_map.get(f"Segment {segment1}")
+            y2 = y_map.get(f"Segment {segment2}")
+            if y1 is None or y2 is None:
+                continue
             time = float(downstream["start_s"])
-            hover = _hover_html("Synchronization point", [("downstream_event", highlight.get("downstream_event_id")), ("downstream_activity", downstream.get("activity")), ("syncDelay", format_seconds(row.get("syncDelay"))), ("branchWait", format_seconds(row.get("branchWait")))], row)
-            fig.add_vline(x=time, line_color="#D97706", line_width=2.5, line_dash="dash")
-            fig.add_trace(go.Scatter(x=[time], y=[y_map[f"Mission {mission_id}"] + 0.25], mode="markers+text", marker=dict(color="white", size=13, symbol="square", line=dict(color="#D97706", width=2)), text=["SYNC"], textposition="middle right", textfont=dict(color="#D97706", size=9), customdata=[[hover]], hovertemplate="%{customdata[0]}<extra></extra>", showlegend=False))
+            hover = _hover_html(
+                "Segment synchronization point",
+                [
+                    ("mission", mission_id),
+                    ("segment1", segment1),
+                    ("segment2", segment2),
+                    ("downstream_event", highlight.get("downstream_event_id")),
+                    ("downstream_activity", downstream.get("activity")),
+                    ("syncDelay", format_seconds(row.get("syncDelay"))),
+                    ("branchWait", format_seconds(row.get("branchWait"))),
+                ],
+                row,
+            )
+            fig.add_trace(go.Scatter(
+                x=[time, time],
+                y=[y1, y2],
+                mode="lines",
+                line=dict(color="#D97706", width=2.5, dash="dash"),
+                customdata=[[hover], [hover]],
+                hovertemplate="%{customdata[0]}<extra></extra>",
+                showlegend=False,
+            ))
+            fig.add_trace(go.Scatter(
+                x=[time],
+                y=[(float(y1) + float(y2)) / 2.0],
+                mode="markers+text",
+                marker=dict(color="white", size=13, symbol="square", line=dict(color="#D97706", width=2)),
+                text=[f"SYNC {segment1} + {segment2}"],
+                textposition="middle right",
+                textfont=dict(color="#D97706", size=9),
+                customdata=[[hover]],
+                hovertemplate="%{customdata[0]}<extra></extra>",
+                showlegend=False,
+            ))
 
     fig.update_layout(
         title=f"Mission {mission_id}: Mission and Segment Context",
@@ -1209,14 +1223,15 @@ def render_mission_detail_panel(
 
     transitions = extract_multi_pattern_transitions(pattern_rows_by_name, events, selected_patterns)
     structural_highlights = extract_structural_highlights(pattern_rows_by_name, mission_id, events, selected_patterns)
-    segment_ids = [str(event.get("segment_id") or "mission-level") for event in events]
+    task_events = [event for event in events if str(event.get("event_type") or "Task") == "Task"]
+    segment_ids = [str(event.get("segment_id") or "mission-level") for event in task_events]
     segment_colors = segment_color_map(segment_ids)
     segment_colors.setdefault("mission-level", "#CBD5E1")
     x_range = _mission_bounds(events)
 
     context_fig = render_mission_context_layer_plotly(
         mission_id=mission_id,
-        events=events,
+        events=task_events,
         structural_highlights=structural_highlights,
         segment_colors=segment_colors,
         x_range=x_range,
@@ -1240,9 +1255,9 @@ def render_mission_detail_panel(
 
     render_dashboard_cards([
         {"label": "Mission", "value": str(mission_id), "caption": "Detailed panel", "accent": "#2563EB"},
-        {"label": "Events", "value": str(len(events)), "caption": "Concrete task executions", "accent": "#059669"},
+        {"label": "Task events", "value": str(len(task_events)), "caption": "Concrete task executions", "accent": "#059669"},
+        {"label": "Control events", "value": str(len(events) - len(task_events)), "caption": "Robot preparation context", "accent": "#2563EB"},
         {"label": "Robots", "value": str(len({event['robot_id'] for event in events})), "caption": "Robot swimlanes", "accent": "#D97706"},
-        {"label": "Pattern links", "value": str(len(transitions)), "caption": "HO, SW, CR edges", "accent": "#DC2626"},
     ])
 
     config = {
@@ -1289,6 +1304,7 @@ def render_mission_detail_panel(
                     {
                         "seq": event["seq"],
                         "event_id": event["event_id"],
+                        "event_type": event.get("event_type") or "Task",
                         "activity": event["activity"],
                         "robot_id": event["robot_id"],
                         "segment_id": event.get("segment_id", ""),
@@ -1447,7 +1463,7 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
         timeline_pattern_names,
         default=timeline_pattern_names,
         key="collab_selected_timeline_patterns",
-        help="Parallel collaboration appears as compact badges, synchronization as vertical markers, and handover/switch/return structures as event links.",
+        help="Parallel collaboration appears as compact badges, synchronization joins two segment rows, and handover/switch/return structures appear as event links.",
     )
 
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1.2])
@@ -1470,16 +1486,31 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
             key="collab_timeline_emphasis_mode",
         )
 
-    c5, c6 = st.columns([1, 1])
+    c5, c6, c7 = st.columns([1, 1, 1])
     with c5:
         large_view = st.checkbox("Large in-page view", value=True, key="collab_large_timeline")
     with c6:
         enable_range_slider = st.checkbox("Show x-axis range slider in robot timelines", value=True, key="collab_range_slider")
+    with c7:
+        show_control_events = st.checkbox(
+            "Show Control events",
+            value=True,
+            key="collab_show_control_events",
+            help="Show robot Control events inline with Task events. Collaboration structures remain Task-based.",
+        )
 
     mission_events_by_id: Dict[str, List[Dict[str, Any]]] = {
         str(mission_id): fetch_mission_events(driver, database, str(mission_id), log_name)
         for mission_id in selected_overview_mission_ids
     }
+    if not show_control_events:
+        mission_events_by_id = {
+            mission_id: [
+                event for event in events
+                if str(event.get("event_type") or "Task") != "Control"
+            ]
+            for mission_id, events in mission_events_by_id.items()
+        }
 
     pattern_rows_by_name: Dict[str, List[Dict[str, Any]]] = {}
     for pattern_name in selected_timeline_patterns:

@@ -34,7 +34,6 @@ from collaboration.collaboration_visuals import (
 from collaboration.timeline_views import render_timeline_tab
 from collaboration.evaluation_views import (
     render_evaluation_workspace,
-    render_occurrence_explainability,
 )
 from collaboration.analysis_views import (
     render_capability_diagnostics_tab,
@@ -260,8 +259,8 @@ def render_page() -> None:
         return
 
     try:
-        tab_evaluation, tab_timeline, tab_explain = st.tabs(
-            ["Evaluation Export", "Collaboration Timeline", "Explain an Occurrence"]
+        tab_evaluation, tab_timeline = st.tabs(
+            ["Evaluation Export", "Collaboration Timeline"]
         )
         with tab_evaluation:
             render_evaluation_workspace(driver, database, catalog, logs)
@@ -272,8 +271,6 @@ def render_page() -> None:
                 key="timeline_log_filter",
             )
             render_timeline_tab(driver, database, catalog, selected_log)
-        with tab_explain:
-            render_occurrence_explainability(driver, database, catalog, logs)
     finally:
         driver.close()
 

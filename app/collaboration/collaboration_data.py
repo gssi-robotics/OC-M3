@@ -44,13 +44,33 @@ def fetch_mission_ids(driver: Any, database: Optional[str], log_name: Optional[s
 
 def fetch_mission_events(driver: Any, database: Optional[str], mission_id: str, log_name: Optional[str]) -> List[Dict[str, Any]]:
     query = """
-    MATCH (m:Entity {type: 'Mission', id: $mission_id})<-[:CORR]-(e:Event)
-    WHERE $log_name IS NULL OR e.Log = $log_name OR m.Log = $log_name
-    OPTIONAL MATCH (e)-[:CORR]->(ro:Entity {type: 'Robot'})
-    OPTIONAL MATCH (e)-[:CORR]->(seg:Entity {type: 'Segment'})
+    WITH $mission_id AS mission_id, $log_name AS log_name
+    CALL (mission_id, log_name) {
+      MATCH (m:Entity {type: 'Mission', id: mission_id})<-[:CORR]-(e:Event {Type: 'Task'})
+      WHERE log_name IS NULL OR e.Log = log_name OR m.Log = log_name
+      OPTIONAL MATCH (e)-[:CORR]->(ro:Entity {type: 'Robot'})
+      OPTIONAL MATCH (e)-[:CORR]->(seg:Entity {type: 'Segment'})
+      RETURN DISTINCT e, ro, seg, 'Task' AS event_type
+
+      UNION
+
+      MATCH (m:Entity {type: 'Mission', id: mission_id})<-[:CORR]-(task:Event {Type: 'Task'})
+      WHERE log_name IS NULL OR task.Log = log_name OR m.Log = log_name
+      MATCH (task)-[:CORR]->(ro:Entity {type: 'Robot'})
+      MATCH (ce:Event {Type: 'Control'})-[:CORR]->(ro)
+      WHERE ce.start IS NOT NULL AND ce.end IS NOT NULL
+        AND ce.end <= task.start
+        AND (log_name IS NULL OR ce.Log = log_name)
+        AND NOT EXISTS {
+          MATCH (priorTask:Event {Type: 'Task'})-[:CORR]->(ro)
+          WHERE priorTask.end > ce.end AND priorTask.end <= task.start
+        }
+      RETURN DISTINCT ce AS e, ro, null AS seg, 'Control' AS event_type
+    }
     RETURN
       toString(e.event_id) AS event_id,
       coalesce(e.activity, toString(e.event_id)) AS activity,
+      event_type,
       toString(e.start) AS start_text,
       toString(e.end) AS end_text,
       e.start.epochMillis AS start_ms,
@@ -143,6 +163,8 @@ def build_pattern_catalog(factory: Any) -> Dict[str, Dict[str, str]]:
             (f"allocation_continuity_{objective.lower()}", "allocation_continuity"),
             (f"resource_participation_{objective.lower()}", "resource_participation"),
             (f"capability_demand_availability_{objective.lower()}", "capability_demand_availability"),
+            (f"objective_performance_{objective.lower()}", "objective_performance"),
+            (f"robot_handover_network_{objective.lower()}", "robot_handover_network"),
         ]
         for key, method in diagnostic_specs:
             query = _maybe_call(factory, method, objective)
@@ -195,6 +217,7 @@ def prepare_events_for_timeline(mission_events: List[Dict[str, Any]]) -> List[Di
     min_ms, _ = mission_span(valid)
     for idx, event in enumerate(valid, start=1):
         event["seq"] = idx
+        event["event_type"] = str(event.get("event_type") or "Task")
         event["robot_id"] = str(event.get("robot_id") or "unassigned")
         event["segment_id"] = str(event.get("segment_id") or "")
         event["start_s"] = relative_seconds(float(event["start_ms"]), min_ms)
@@ -250,13 +273,7 @@ def extract_structural_highlights(
 
     for pattern_name in selected_patterns:
         for row in pattern_rows_by_name.get(pattern_name, []):
-            if pattern_name.startswith("co_participation"):
-                obj_id = node_id(row.get("objective"))
-                if obj_id == mission_id:
-                    highlights.append({"kind": "mission_team", "pattern_name": pattern_name, "label": f"mission team={row.get('teamSize', '?')}", "row": row})
-                elif obj_id in seg_ext:
-                    highlights.append({"kind": "segment_team", "segment": obj_id, "pattern_name": pattern_name, "label": f"{obj_id}: team={row.get('teamSize', '?')}", "row": row})
-            elif pattern_name.startswith("parallel_collaboration_segment"):
+            if pattern_name.startswith("parallel_collaboration_segment"):
                 segment1 = node_id(row.get("segment1"))
                 segment2 = node_id(row.get("segment2"))
                 if segment1 in seg_ext and segment2 in seg_ext:
@@ -268,9 +285,26 @@ def extract_structural_highlights(
                     other = mission2 if mission1 == mission_id else mission1
                     highlights.append({"kind": "parallel_mission", "pattern_name": pattern_name, "label": f"parallel with {other}", "row": row})
             elif pattern_name.startswith("sync_diagnostics"):
+                sync_mission = node_id(row.get("mission"))
+                segment1 = node_id(row.get("segment1"))
+                segment2 = node_id(row.get("segment2"))
                 downstream_event = event_id_from_mapping(row.get("downstreamEvent")) or event_id_from_mapping(row.get("e_d"))
-                if downstream_event in mission_event_ids:
-                    highlights.append({"kind": "sync", "downstream_event_id": downstream_event, "pattern_name": pattern_name, "label": f"sync={format_seconds(row.get('syncDelay'))}", "row": row})
+                if (
+                    sync_mission == mission_id
+                    and segment1 in seg_ext
+                    and segment2 in seg_ext
+                    and downstream_event in mission_event_ids
+                ):
+                    highlights.append({
+                        "kind": "sync",
+                        "mission_id": sync_mission,
+                        "segment1": segment1,
+                        "segment2": segment2,
+                        "downstream_event_id": downstream_event,
+                        "pattern_name": pattern_name,
+                        "label": f"sync={format_seconds(row.get('syncDelay'))}",
+                        "row": row,
+                    })
     return highlights
 
 

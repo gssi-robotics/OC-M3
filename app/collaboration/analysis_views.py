@@ -1048,26 +1048,26 @@ def render_capability_demand_chart(rows: List[Dict[str, Any]]) -> None:
             "label": f"{objective} / {capability}",
             "requirementCount": _safe_number(row.get("requirementCount")),
             "availability": _safe_number(row.get("availability")),
-            "demandAvailabilityRatio": _safe_number(row.get("demandAvailabilityRatio")),
+            "demandPerProvider": _safe_number(row.get("demandPerProvider")),
         })
     prepared = sorted(
         prepared,
-        key=lambda item: (-item["demandAvailabilityRatio"], -item["requirementCount"]),
+        key=lambda item: (-item["demandPerProvider"], -item["requirementCount"]),
     )
     if not prepared:
         st.info("No capability demand/availability diagnostics found.")
         return
     fig = go.Figure(go.Bar(
-        x=[item["demandAvailabilityRatio"] for item in prepared],
+        x=[item["demandPerProvider"] for item in prepared],
         y=[item["label"] for item in prepared],
         orientation="h",
         customdata=[[item["requirementCount"], item["availability"]] for item in prepared],
-        hovertemplate="objective / capability=%{y}<br>demand/availability=%{x:.3f}<br>requirements=%{customdata[0]}<br>availability=%{customdata[1]}<extra></extra>",
+        hovertemplate="objective / capability=%{y}<br>tasks per provider=%{x:.3f}<br>requirements=%{customdata[0]}<br>providers=%{customdata[1]}<extra></extra>",
     ))
     fig.update_layout(
-        title="Capability demand-to-availability ranking",
+        title="Capability demand per provider",
         height=max(380, min(850, 110 + 32 * len(prepared))),
-        xaxis_title="requirement count / provider availability",
+        xaxis_title="task requirements per available provider",
         yaxis_title="Objective / capability",
         template="plotly_white",
     )
