@@ -1,5 +1,2 @@
-.DS_Store
-.venv
-.uploaded_inputs
-*__pycache__/
-synthetic_*/
+.venv/*
+*/all_runs/*
