@@ -1,9 +1,0 @@
-pattern_type,objective_type,occurrences
-capability_return,mission,7
-capability_return,segment,5
-handover,mission,165
-handover,segment,88
-objective_switch,mission,168
-objective_switch,segment,131
-parallel_collaboration,mission,190
-parallel_collaboration,segment,60
