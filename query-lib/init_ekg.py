@@ -1,47 +1,6 @@
 """
 Cypher query builder for loading a multi-robot mission Event Knowledge Graph (EKG)
-from the JSON configuration produced by streamlit_ekg_loader_config_builder.py.
-
-The loader follows the paper data model:
-
-    (:Event)-[:CORR]->(:Entity)
-    (:Entity {type: 'Segment'})-[:PART_OF]->(:Entity {type: 'Mission'})
-    (:Entity {type: 'Robot'})-[:HAS]->(:Capability)
-    (:Event)-[:REQ]->(:Capability)
-    (:Event {Type: 'Task'})-[:DF]->(:Event {Type: 'Task'})
-    (:Event)-[:DF_Control]->(:Event)
-
-The Streamlit app only stores file paths and column mappings. CORR, PART_OF,
-REQ, HAS, and DF relationships are inferred by the backend through these queries.
-
-Usage from Python:
-
-    import json
-    from ekg_neo4j_loader_queries import build_load_plan
-
-    with open("log_1_loader_config.json") as f:
-        config = json.load(f)
-
-    for step in build_load_plan(config):
-        print(step["name"])
-        print(step["query"])
-
-Usage from CLI:
-
-    python ekg_neo4j_loader_queries.py log_1_loader_config.json --out load_plan.cypher
-
-Notes:
-- The generated queries use LOAD CSV. Neo4j must be able to read the file paths.
-  If the DBMS is configured to allow file URLs outside the import directory, absolute
-  paths will work. Otherwise, copy the files into Neo4j's import directory and adjust
-  paths in the JSON config.
-- Event start/end are loaded as datetime values and canonical event properties are:
-  event_id, activity, Type, start, end. Additional selected event attributes are also stored.
-- Entity nodes use canonical properties: id and type.
-- The `Log` property is stored on nodes for traceability, but the generated queries
-  assume a single log per Neo4j database and do not match/filter by `Log`.
-- By default, the app-level entity type "Segment" is normalized to the paper-level
-  entity type "Segment". Change ENTITY_TYPE_ALIASES if you want to store Segment.
+from the JSON configuration.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 # OC-M3: Object-Centric Collaboration Mining for Adaptive Multi-Robot Missions
 
-This repository contains the supporting implementation and reproducibility data for the Object-Centric Collaboration Mining for Adaptive Multi-Robot Missions journal submission. 
+This repository contains the supporting implementation and reproducibility data for the _Object-Centric Collaboration Mining for Adaptive Multi-Robot Missions_ journal submission. 
 
 OC-M3 imports multi-robot execution logs into a Neo4j event knowledge graph (EKG), instantiates collaboration structures, and provides object-centric analyses and exportable evaluation tables through a Streamlit interface.
 

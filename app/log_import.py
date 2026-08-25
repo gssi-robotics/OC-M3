@@ -1,17 +1,5 @@
 """
 Streamlit app to build a backend loader configuration for an EKG/Neo4j import.
-
-The app does NOT create normalized CSVs and does NOT precompute CORR, PART_OF,
-or REQ relationships. It only:
-
-1. saves uploaded files to a backend-readable folder;
-2. lets the user map event columns and entity columns;
-3. lets the user optionally upload attribute files for Robot, Mission, Segment;
-4. lets the user upload a task -> required capability table;
-5. outputs a JSON configuration that the backend can use to load Neo4j.
-
-Run:
-    streamlit run streamlit_ekg_loader_config_builder.py
 """
 
 from __future__ import annotations
