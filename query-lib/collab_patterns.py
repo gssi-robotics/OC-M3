@@ -375,6 +375,7 @@ class CollaborationPatternCypher:
               WITH mission, segment1, segment2, end1, end2, latestEnd, head(collect(candidate)) AS downstreamEvent
               WHERE downstreamEvent IS NOT NULL
               RETURN mission, segment1, segment2, downstreamEvent, latestEnd, 
+                    toString(downstreamEvent.{s.event_id_prop}) AS downstreamEventId,
                     downstreamEvent.{s.event_start_prop} AS downstreamStart, {sync_delay} AS syncDelay,
                     {branch_wait_1} AS branchWait1, {branch_wait_2} AS branchWait2,
                     {branch_wait_1} + {branch_wait_2} AS totalBranchWait,

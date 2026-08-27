@@ -4,7 +4,7 @@ import base64
 import json
 import math
 from collections import defaultdict
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -15,6 +15,7 @@ from .collaboration_data import (
     extract_structural_highlights,
     fetch_mission_events,
     fetch_mission_ids,
+    fetch_robot_ids,
     mission_span,
     prepare_events_for_timeline,
     relative_seconds,
@@ -24,6 +25,7 @@ from .collaboration_data import (
 from .collaboration_utils import (
     format_seconds,
     humanize_name,
+    node_id,
     normalize_value,
     pattern_color_map,
     pattern_edge_hover_html,
@@ -500,6 +502,7 @@ def render_all_missions_overview_plotly(
 def render_robot_activity_lanes_over_missions_plotly(
     mission_events_by_id: Mapping[str, List[Dict[str, Any]]],
     large_view: bool,
+    robot_ids: Optional[Sequence[str]] = None,
 ) -> Any:
     """Robot-lane event timeline for all selected missions.
 
@@ -516,7 +519,7 @@ def render_robot_activity_lanes_over_missions_plotly(
     tickvals, ticktext = _relative_time_ticks(x_range)
 
     # Stable activity colors across all missions.
-    all_robot_ids = sorted({
+    all_robot_ids = sorted(set(str(robot) for robot in (robot_ids or [])) | {
         str(event.get("robot_id") or "unassigned")
         for events in mission_events_by_id.values()
         for event in events
@@ -539,7 +542,7 @@ def render_robot_activity_lanes_over_missions_plotly(
     lane_keys: List[Tuple[str, str]] = []
     mission_group_bounds: List[Dict[str, Any]] = []
     for mission_id in mission_ids:
-        robots = sorted({str(event.get("robot_id") or "unassigned") for event in mission_events_by_id.get(mission_id, [])})
+        robots = list(all_robot_ids)
         if not robots:
             robots = ["unassigned"]
         start_index = len(lane_keys)
@@ -831,9 +834,14 @@ def render_robot_event_timeline_plotly(
     show_df_backbone: bool,
     large_view: bool,
     enable_range_slider: bool,
+    robot_ids: Optional[Sequence[str]] = None,
 ) -> Any:
     go, _ = _plotly_required()
-    robots = sorted({str(event["robot_id"]) for event in events}, reverse=True)
+    robots = sorted(
+        set(str(robot) for robot in (robot_ids or []))
+        | {str(event["robot_id"]) for event in events},
+        reverse=True,
+    )
     y_map = {robot: index for index, robot in enumerate(reversed(robots))}
     pattern_names_for_colors = list(selected_patterns)
     pattern_names_for_colors.extend(str(transition["pattern_name"]) for transition in transitions)
@@ -936,12 +944,22 @@ def render_robot_event_timeline_plotly(
             xs: List[Optional[float]] = []
             ys: List[Optional[float]] = []
             hover: List[str] = []
+            lane_y = float(y_map[robot])
+            rail_y = lane_y + 0.36
             for left, right in zip(robot_events, robot_events[1:]):
-                xs.extend([float(left["end_s"]), float(right["start_s"]), None])
-                ys.extend([float(y_map[robot]), float(y_map[robot]), None])
+                left_center = (float(left["start_s"]) + float(left["end_s"])) / 2.0
+                right_center = (float(right["start_s"]) + float(right["end_s"])) / 2.0
+                xs.extend([left_center, left_center, right_center, right_center, None])
+                ys.extend([lane_y, rail_y, rail_y, lane_y, None])
+                transition_hover = (
+                    f"{left['activity']} -> {right['activity']}<br>"
+                    f"{left['event_id']} -> {right['event_id']}"
+                )
                 hover.extend([
-                    f"{left['activity']} -> {right['activity']}<br>{left['event_id']} -> {right['event_id']}",
-                    f"{left['activity']} -> {right['activity']}<br>{left['event_id']} -> {right['event_id']}",
+                    transition_hover,
+                    transition_hover,
+                    transition_hover,
+                    transition_hover,
                     "",
                 ])
             if xs:
@@ -952,7 +970,7 @@ def render_robot_event_timeline_plotly(
                     name="Robot sequence",
                     legendgroup="df_backbone",
                     showlegend=not traces_added,
-                    line=dict(color="rgba(100,116,139,0.58)", width=1.4, dash="dot"),
+                    line=dict(color="rgba(71,85,105,0.88)", width=2.0, dash="dot"),
                     hovertext=hover,
                     hoverinfo="text",
                 ))
@@ -1213,6 +1231,7 @@ def render_mission_detail_panel(
     show_df_backbone: bool,
     large_view: bool,
     enable_range_slider: bool,
+    robot_ids: Sequence[str],
 ) -> None:
     """Render one mission as two coordinated plots: objective context + robot timeline."""
     _, pio = _plotly_required()
@@ -1251,6 +1270,7 @@ def render_mission_detail_panel(
         show_df_backbone=show_df_backbone,
         large_view=large_view,
         enable_range_slider=enable_range_slider,
+        robot_ids=robot_ids,
     )
 
     render_dashboard_cards([
@@ -1352,6 +1372,7 @@ def render_collaboration_timeline_page(
     show_df_backbone: bool,
     large_view: bool,
     enable_range_slider: bool,
+    robot_ids: Sequence[str],
 ) -> None:
     """Two-level collaboration timeline: all-missions overview + mission detail panels."""
     _, pio = _plotly_required()
@@ -1368,6 +1389,7 @@ def render_collaboration_timeline_page(
     robot_activity_lanes_fig = render_robot_activity_lanes_over_missions_plotly(
         mission_events_by_id=mission_events_by_id,
         large_view=large_view,
+        robot_ids=robot_ids,
     )
     overview_config = {"scrollZoom": True, "displayModeBar": True, "displaylogo": False, "responsive": True}
     overview_html = (
@@ -1419,6 +1441,7 @@ def render_collaboration_timeline_page(
             show_df_backbone=show_df_backbone,
             large_view=large_view,
             enable_range_slider=enable_range_slider,
+            robot_ids=robot_ids,
         )
 
 def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str, Dict[str, str]], log_name: Optional[str]) -> None:
@@ -1428,6 +1451,7 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
     )
 
     mission_ids = fetch_mission_ids(driver, database, log_name)
+    robot_ids = fetch_robot_ids(driver, database, log_name)
     log_key = str(log_name or "all").replace(" ", "_")
 
     if not mission_ids:
@@ -1472,7 +1496,11 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
     with c2:
         show_activity_labels = st.checkbox("Show activity labels inside bars", value=True, key="collab_show_activity_labels")
     with c3:
-        show_df_backbone = st.checkbox("Show robot sequence backbone", value=True, key="collab_show_df_backbone")
+        show_df_backbone = st.checkbox(
+            "Show robot sequence backbone",
+            value=True,
+            key="collab_show_df_backbone",
+        )
     with c4:
         emphasis_mode = st.selectbox(
             "Pattern emphasis mode",
@@ -1518,6 +1546,32 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
         if query:
             pattern_rows_by_name[pattern_name] = run_pattern_query(driver, database, query, log_name, row_limit)
 
+    sync_pattern = "sync_diagnostics_parallel_segments"
+    sync_rows = [
+        row
+        for row in pattern_rows_by_name.get(sync_pattern, [])
+        if node_id(row.get("mission")) in selected_overview_mission_ids
+    ]
+    with st.expander(
+        "Segment synchronization diagnostics",
+        expanded=bool(sync_rows),
+    ):
+        st.caption(
+            "Parallel Segment branches are associated with their first downstream "
+            "mission-level Task. The table reports synchronization delay and branch waiting."
+        )
+        if sync_pattern not in selected_timeline_patterns:
+            st.info(
+                "Select `sync_diagnostics_parallel_segments` in `Patterns to show` "
+                "to calculate these diagnostics and display SYNC markers."
+            )
+        elif sync_rows:
+            st.dataframe(table_safe_rows(sync_rows), width="stretch", hide_index=True)
+        else:
+            st.info(
+                "No Segment synchronization point was found for the Mission selection."
+            )
+
     try:
         render_collaboration_timeline_page(
             mission_events_by_id=mission_events_by_id,
@@ -1529,6 +1583,7 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
             show_df_backbone=show_df_backbone,
             large_view=large_view,
             enable_range_slider=enable_range_slider,
+            robot_ids=robot_ids,
         )
     except ImportError as exc:
         st.error(str(exc))

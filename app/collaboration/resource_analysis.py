@@ -144,20 +144,21 @@ def fetch_robot_capability_rows_for_logs(
     database: Optional[str],
     log_names: Sequence[str],
 ) -> List[Dict[str, Any]]:
-    """Fetch declared providers for each selected execution log."""
+    """Fetch the complete robot roster with optional declared capabilities."""
     if not log_names:
         return []
     query = """
     UNWIND $log_names AS log_name
-    MATCH (robot:Entity {type: 'Robot'})-[:HAS]->(capability:Capability)
+    MATCH (robot:Entity {type: 'Robot'})
     WHERE robot.Log = log_name
-       OR capability.Log = log_name
        OR EXISTS {
          MATCH (event:Event {Log: log_name})-[:CORR]->(robot)
        }
+    OPTIONAL MATCH (robot)-[:HAS]->(capability:Capability)
     RETURN DISTINCT toString(log_name) AS log_name,
            toString(robot.id) AS robot_id,
-           coalesce(toString(capability.name), toString(capability.id)) AS capability
+           CASE WHEN capability IS NULL THEN null
+                ELSE coalesce(toString(capability.name), toString(capability.id)) END AS capability
     ORDER BY log_name, capability, robot_id
     """
     return run_query(driver, database, query, {"log_names": list(log_names)})
@@ -262,8 +263,15 @@ def compute_resource_metrics(
     duration_complete = total_tasks > 0 and len(timed_events) == total_tasks
     duration_share_available = duration_complete and total_execution_seconds > 0
 
+    roster_robots = {
+        str(row["robot_id"])
+        for row in provider_rows
+        if row.get("robot_id") is not None and str(row["robot_id"]).strip()
+    }
+    involved_robots = set(robot_event_ids)
+    all_robots = involved_robots | roster_robots
     contribution_rows: List[Dict[str, Any]] = []
-    for robot in sorted(robot_event_ids):
+    for robot in sorted(all_robots):
         task_count = len(robot_event_ids[robot])
         execution_seconds = sum(robot_duration_by_event.get(robot, {}).values())
         task_share = task_count / total_tasks if total_tasks else 0.0
@@ -302,7 +310,6 @@ def compute_resource_metrics(
     capability_demand.sort(key=lambda row: (-row["required_task_executions"], row["capability"]))
 
     providers = _provider_map(provider_rows)
-    involved_robots = set(robot_event_ids)
     availability_rows: List[Dict[str, Any]] = []
     capability_workload_rows: List[Dict[str, Any]] = []
     for demand in capability_demand:
@@ -338,19 +345,26 @@ def compute_resource_metrics(
             "capability": capability,
             "task_count": len(utilization.get((robot, capability), set())),
         }
-        for robot in sorted(involved_robots)
+        for robot in sorted(all_robots)
         for capability in sorted(demand_event_ids)
     ]
 
-    dominance = contribution_rows[0]["task_share"] if contribution_rows else None
+    dominance = (
+        contribution_rows[0]["task_share"]
+        if contribution_rows and total_tasks and involved_robots
+        else None
+    )
     dominant_robots = [
         row["robot_id"]
         for row in contribution_rows
-        if dominance is not None and row["task_share"] == dominance
+        if dominance is not None
+        and row["task_count"] > 0
+        and row["task_share"] == dominance
     ]
     return {
         "summary": {
             "robot_count": len(involved_robots),
+            "fleet_robot_count": len(all_robots),
             "task_count": total_tasks,
             "dominant_robot": ", ".join(dominant_robots) if dominant_robots else None,
             "dominant_robots": dominant_robots,
@@ -593,9 +607,14 @@ def compute_aggregated_capability_metrics(
     providers: Dict[str, Set[str]] = defaultdict(set)
     used_tasks: Dict[Tuple[str, str], int] = defaultdict(int)
     used_objectives: Dict[Tuple[str, str], Set[str]] = defaultdict(set)
+    all_robots: Set[str] = set()
 
     for item in instance_metrics:
         key = str(item.get("objective", {}).get("key") or "")
+        all_robots.update(
+            str(row["robot_id"])
+            for row in item.get("robot_contributions", [])
+        )
         for row in item.get("capability_demand", []):
             capability = str(row["capability"])
             demand_tasks[capability] += int(row["required_task_executions"])
@@ -630,7 +649,7 @@ def compute_aggregated_capability_metrics(
             "actually_used_robots": used_robots,
         })
         workload_shares: List[float] = []
-        for robot in sorted(providers.get(capability, set()) | set(used_robots)):
+        for robot in sorted(all_robots):
             pair = (robot, capability)
             task_count = used_tasks.get(pair, 0)
             objective_use_count = len(used_objectives.get(pair, set()))

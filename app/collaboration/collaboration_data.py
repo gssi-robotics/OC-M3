@@ -42,6 +42,30 @@ def fetch_mission_ids(driver: Any, database: Optional[str], log_name: Optional[s
         return [record["mission_id"] for record in session.run(query, log_name=log_name) if record["mission_id"] is not None]
 
 
+def fetch_robot_ids(
+    driver: Any,
+    database: Optional[str],
+    log_name: Optional[str],
+) -> List[str]:
+    """Return the complete robot roster, including robots without Task events."""
+    query = """
+    MATCH (robot:Entity {type: 'Robot'})
+    WHERE $log_name IS NULL
+       OR robot.Log = $log_name
+       OR EXISTS {
+         MATCH (event:Event {Log: $log_name})-[:CORR]->(robot)
+       }
+    RETURN DISTINCT toString(robot.id) AS robot_id
+    ORDER BY robot_id
+    """
+    with driver.session(**neo4j_shared.session_kwargs(database)) as session:
+        return [
+            str(record["robot_id"])
+            for record in session.run(query, log_name=log_name)
+            if record["robot_id"] is not None
+        ]
+
+
 def fetch_mission_events(driver: Any, database: Optional[str], mission_id: str, log_name: Optional[str]) -> List[Dict[str, Any]]:
     query = """
     WITH $mission_id AS mission_id, $log_name AS log_name
@@ -288,11 +312,13 @@ def extract_structural_highlights(
                 sync_mission = node_id(row.get("mission"))
                 segment1 = node_id(row.get("segment1"))
                 segment2 = node_id(row.get("segment2"))
-                downstream_event = event_id_from_mapping(row.get("downstreamEvent")) or event_id_from_mapping(row.get("e_d"))
+                downstream_event = (
+                    node_id(row.get("downstreamEventId"))
+                    or event_id_from_mapping(row.get("downstreamEvent"))
+                    or event_id_from_mapping(row.get("e_d"))
+                )
                 if (
                     sync_mission == mission_id
-                    and segment1 in seg_ext
-                    and segment2 in seg_ext
                     and downstream_event in mission_event_ids
                 ):
                     highlights.append({
