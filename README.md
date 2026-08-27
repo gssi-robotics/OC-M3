@@ -1,6 +1,6 @@
 # Synthetic Multi-Robot Log Generator
 
-This package generates reproducible synthetic execution logs for the quantitative evaluation of OC-M3. The generator is an **evaluation instrument** to assess whether our proposal can correctly instantiate and characterize the collaborative behaviors.
+This package generates reproducible synthetic execution logs produced for experimental purposes during the development and evaluation of OC-M3. The generator is an _instrument_ to assess whether our proposal can correctly instantiate and characterize the collaborative behaviors.
 
 ## Evaluation design
 
