@@ -1,5 +1,5 @@
 {
-  "log_name": "log_1",
+  "log_name": "om_baseline",
   "event_id": "event_id",
   "event_activity": "activity",
   "event_type": "event_type",
@@ -8,7 +8,7 @@
   "entity_id": "entity_id",
   "entity_type_id": "type",
   "events": {
-    "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/events.csv",
+    "path": "/Users/sara/Documents/Repo/OC-M3/replication-data/order_management/order_management_baseline.csv",
     "attr": [
       "event_id",
       "event_type",
@@ -38,7 +38,7 @@
   "entities": {
     "robot_id": {
       "type": "Robot",
-      "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/robot_table.csv",
+      "path": "/Users/sara/Documents/Repo/OC-M3/replication-data/order_management/robot_table.csv",
       "event_column": "robot_id",
       "entity_id": "robot_id",
       "attr": [
@@ -53,7 +53,7 @@
     },
     "mission_id": {
       "type": "Mission",
-      "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/events.csv",
+      "path": "/Users/sara/Documents/Repo/OC-M3/replication-data/order_management/order_management_baseline.csv",
       "event_column": "mission_id",
       "entity_id": "mission_id",
       "attr": [
@@ -66,7 +66,7 @@
     },
     "segment_id": {
       "type": "Segment",
-      "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/events.csv",
+      "path": "/Users/sara/Documents/Repo/OC-M3/replication-data/order_management/order_management_baseline.csv",
       "event_column": "segment_id",
       "entity_id": "segment_id",
       "attr": [
@@ -79,7 +79,7 @@
     }
   },
   "task_capabilities": {
-    "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/task_table.csv",
+    "path": "/Users/sara/Documents/Repo/OC-M3/replication-data/order_management/task_table.csv",
     "task_column": "task_name",
     "capability_column": "required_capability",
     "attr": [
