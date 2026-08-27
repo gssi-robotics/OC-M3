@@ -7,7 +7,12 @@ import streamlit as st
 
 import neo4j_shared
 from collaboration.collaboration_utils import format_seconds, table_safe_rows
-from ekg.aggregation_data import fetch_class_durations, fetch_class_graph, materialize_aggregation
+from ekg.aggregation_data import (
+    fetch_class_durations,
+    fetch_class_graph,
+    fetch_class_starts,
+    materialize_aggregation,
+)
 from ekg.aggregation_visuals import render_class_dfg_panel
 
 
@@ -16,6 +21,8 @@ def clear_state() -> None:
         "agg_connected",
         "agg_error",
         "agg_rows",
+        "agg_start_rows",
+        "agg_edge_limit_reached",
         "agg_result",
         "agg_class_durations",
     ):
@@ -104,6 +111,8 @@ def _render_aggregation_controls(connection: Dict[str, str]) -> None:
                 segment_choice,
             )
             st.session_state.pop("agg_rows", None)
+            st.session_state.pop("agg_start_rows", None)
+            st.session_state.pop("agg_edge_limit_reached", None)
         except Exception as exc:  # noqa: BLE001
             st.error(f"Could not create the aggregated graph: {exc}")
         finally:
@@ -171,13 +180,25 @@ def _overall_entity_duration(
 
 def _render_class_dfg_controls(connection: Dict[str, str]) -> None:
     st.subheader("Class DFG")
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         min_frequency = st.slider("Minimum frequency", 1, 100, 1, key="ekg_min_frequency")
     with c2:
         edge_limit = st.slider("Edge limit", 10, 500, 100, step=10, key="ekg_edge_limit")
     with c3:
         show_time = st.checkbox("Show average transition time", value=True, key="ekg_show_avg_transition")
+        show_start_nodes = st.checkbox(
+            "Show starting nodes",
+            value=True,
+            key="ekg_show_start_nodes",
+        )
+    with c4:
+        layout = st.selectbox(
+            "Graph layout",
+            options=["Top to bottom", "Left to right"],
+            help="Both options use a layered hierarchical process-model layout.",
+            key="ekg_graph_layout",
+        )
 
     if st.button("Visualize class graph", key="ekg_visualize_class_graph"):
         driver, error = neo4j_shared.get_neo4j_driver(
@@ -189,25 +210,63 @@ def _render_class_dfg_controls(connection: Dict[str, str]) -> None:
             st.error(error)
             return
         try:
-            st.session_state["agg_rows"] = fetch_class_graph(
+            fetched_rows = fetch_class_graph(
+                driver,
+                connection["database"],
+                min_frequency,
+                edge_limit + 1,
+            )
+            rows = fetched_rows[:edge_limit]
+            start_rows = fetch_class_starts(
                 driver,
                 connection["database"],
                 min_frequency,
                 edge_limit,
             )
+            if rows:
+                visible_node_ids = {
+                    str(node_id)
+                    for row in rows
+                    for node_id in (row["source_id"], row["target_id"])
+                }
+                start_rows = [
+                    row
+                    for row in start_rows
+                    if str(row["target_id"]) in visible_node_ids
+                ]
+            st.session_state["agg_rows"] = rows
+            st.session_state["agg_start_rows"] = start_rows
+            st.session_state["agg_edge_limit_reached"] = len(fetched_rows) > edge_limit
         except Exception as exc:  # noqa: BLE001
             st.error(f"Could not load the class graph: {exc}")
         finally:
             driver.close()
 
-    _render_class_dfg(show_time)
+    _render_class_dfg(
+        show_time,
+        show_start_nodes,
+        "TB" if layout == "Top to bottom" else "LR",
+    )
 
 
-def _render_class_dfg(show_time: bool) -> None:
+def _render_class_dfg(
+    show_time: bool,
+    show_start_nodes: bool,
+    rank_direction: str,
+) -> None:
     rows = st.session_state.get("agg_rows", [])
+    start_rows = st.session_state.get("agg_start_rows", [])
+    if st.session_state.get("agg_edge_limit_reached", False):
+        st.warning(
+            "The edge limit was reached, so additional DF_C relationships exist in Neo4j "
+            "but are intentionally omitted from this visualization. Increase the edge limit to show more."
+        )
     render_class_dfg_panel(
         rows,
+        start_rows,
         show_time=show_time,
+        show_start_nodes=show_start_nodes,
+        rank_direction=rank_direction,
         key_prefix="ekg",
         empty_message="Create the aggregation, then press Visualize class graph.",
     )

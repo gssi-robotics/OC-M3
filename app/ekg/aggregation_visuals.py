@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
@@ -38,8 +38,10 @@ def perspective_colors(rows: List[Dict[str, Any]]) -> Dict[str, str]:
 
 def build_graphviz(
     rows: List[Dict[str, Any]],
+    start_rows: List[Dict[str, Any]],
     show_time: bool,
     color_by_perspective: Dict[str, str],
+    rank_direction: str = "TB",
 ) -> str:
     try:
         import graphviz
@@ -51,9 +53,17 @@ def build_graphviz(
     dot = graphviz.Digraph(
         "aggregated_ekg",
         graph_attr={
-            "rankdir": "LR",
+            "rankdir": rank_direction,
             "bgcolor": "white",
             "overlap": "false",
+            "splines": "spline",
+            "concentrate": "false",
+            "ordering": "out",
+            "outputorder": "edgesfirst",
+            "nodesep": "0.65",
+            "ranksep": "1.15",
+            "pad": "0.3",
+            "newrank": "true",
         },
     )
     dot.attr(
@@ -63,7 +73,7 @@ def build_graphviz(
         fillcolor=CLASS_COLOR,
         fontname="Helvetica",
     )
-    dot.attr("edge", fontname="Helvetica", arrowsize="0.8")
+    dot.attr("edge", fontname="Helvetica", fontsize="9", arrowsize="0.7")
 
     nodes: Dict[str, Dict[str, Any]] = {}
     for row in rows:
@@ -78,11 +88,56 @@ def build_graphviz(
             "count": int(row.get("target_count") or 0),
         }
 
+    for row in start_rows:
+        nodes[str(row["target_id"])] = {
+            "activity": str(row.get("target_activity") or "n/a"),
+            "details": dict(row.get("target_details") or {}),
+            "count": int(row.get("target_count") or 0),
+        }
+
     for node_id, node in nodes.items():
         dot.node(
             node_id,
             label=node["activity"],
             tooltip=_tooltip(node["details"], node["count"]),
+        )
+
+    start_perspectives = sorted({
+        str(row.get("perspective") or "DF") for row in start_rows
+    })
+    with dot.subgraph(name="start_rank") as start_rank:
+        start_rank.attr(rank="source")
+        for perspective in start_perspectives:
+            color = color_by_perspective.get(perspective, "#4A4A4A")
+            start_rank.node(
+                f"__start__{perspective}",
+                label=perspective,
+                shape="ellipse",
+                style="filled",
+                fillcolor=color,
+                color=color,
+                fontcolor="white",
+                tooltip=f"{perspective} object perspective start",
+            )
+
+    for row in start_rows:
+        perspective = str(row.get("perspective") or "DF")
+        target_id = str(row["target_id"])
+        dot.edge(
+            f"__start__{perspective}",
+            target_id,
+            xlabel=f"start | n={row['frequency']}",
+            color="#8A8A8A",
+            fontcolor="#6F6F6F",
+            style="dashed",
+            penwidth="1.4",
+            constraint="true",
+            minlen="1",
+            weight="4",
+            tooltip=(
+                f"Perspective: {perspective}\n"
+                f"Start occurrences: {row['frequency']}"
+            ),
         )
 
     for row in rows:
@@ -97,10 +152,10 @@ def build_graphviz(
         dot.edge(
             str(row["source_id"]),
             str(row["target_id"]),
-            label=label,
+            xlabel=label,
             color=color,
             fontcolor=color,
-            penwidth=str(1.0 + min(float(row["frequency"]), 20.0) / 4.0),
+            penwidth=str(0.9 + min(float(row["frequency"]), 20.0) / 12.0),
             tooltip=(
                 f"Perspective: {perspective}\n"
                 f"Frequency: {row['frequency']}\n"
@@ -136,17 +191,24 @@ def render_perspective_legend(color_by_perspective: Dict[str, str]) -> None:
 
 def render_class_dfg_panel(
     rows: List[Dict[str, Any]],
+    start_rows: Optional[List[Dict[str, Any]]] = None,
     *,
     show_time: bool,
+    show_start_nodes: bool = True,
+    rank_direction: str = "TB",
     key_prefix: str,
     empty_message: str,
     detail_expander_label: str = "DF_C details",
 ) -> None:
-    if not rows:
+    start_rows = start_rows or []
+    if not rows and not start_rows:
         st.info(empty_message)
         return
 
-    perspectives = sorted({str(row.get("perspective") or "DF") for row in rows})
+    perspectives = sorted({
+        str(row.get("perspective") or "DF")
+        for row in [*rows, *start_rows]
+    })
     selected_perspectives = st.multiselect(
         "Visible perspectives",
         options=perspectives,
@@ -158,7 +220,16 @@ def render_class_dfg_panel(
     filtered_rows = [
         row for row in rows if str(row.get("perspective") or "DF") in selected_perspectives
     ]
-    color_by_perspective = perspective_colors(rows)
+    filtered_start_rows = (
+        [
+            row
+            for row in start_rows
+            if str(row.get("perspective") or "DF") in selected_perspectives
+        ]
+        if show_start_nodes
+        else []
+    )
+    color_by_perspective = perspective_colors([*rows, *start_rows])
     visible_colors = {
         perspective: color_by_perspective[perspective]
         for perspective in selected_perspectives
@@ -166,22 +237,28 @@ def render_class_dfg_panel(
     }
 
     st.caption(
-        f"Showing {len(filtered_rows)} of {len(rows)} edges across "
+        f"Showing {len(filtered_start_rows)} start and {len(filtered_rows)} directly-follows edges across "
         f"{len(selected_perspectives)} perspective(s)."
     )
     render_perspective_legend(visible_colors)
 
-    if filtered_rows:
+    if filtered_rows or filtered_start_rows:
         st.graphviz_chart(
             build_graphviz(
                 filtered_rows,
+                filtered_start_rows,
                 show_time,
                 color_by_perspective,
+                rank_direction,
             ),
             width="stretch",
+            height=900,
         )
     else:
         st.info("Select at least one perspective to display its edges.")
 
     with st.expander(detail_expander_label):
         st.dataframe(table_safe_rows(filtered_rows), width="stretch", hide_index=True)
+
+    with st.expander("Start-edge details"):
+        st.dataframe(table_safe_rows(filtered_start_rows), width="stretch", hide_index=True)

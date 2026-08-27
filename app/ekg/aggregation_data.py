@@ -242,3 +242,42 @@ def fetch_class_graph(
                 limit=limit,
             )
         ]
+
+
+def fetch_class_starts(
+    driver: Any,
+    database: Optional[str],
+    min_frequency: int,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """Return first observed Task classes for each object perspective."""
+    query = """
+    MATCH (entity:Entity)<-[:CORR]-(event:Event {Type: 'Task'})-[:OBS]->(c:Class)
+    WHERE entity.type IN ['Mission', 'Robot', 'Segment']
+      AND NOT EXISTS {
+        MATCH (entity)<-[:CORR]-(previous:Event {Type: 'Task'})-[incoming:DF]->(event)
+        WHERE coalesce(incoming.Type, incoming.type, incoming.perspective_type, 'DF') = entity.type
+          AND toString(incoming.perspective_id) = toString(entity.id)
+      }
+    WITH entity.type AS perspective,
+         c,
+         count(DISTINCT entity) AS frequency
+    WHERE frequency >= $min_frequency
+    RETURN perspective,
+           c.Event_Id AS target_id,
+           c.activity AS target_activity,
+           properties(c) AS target_details,
+           c.Count AS target_count,
+           frequency
+    ORDER BY frequency DESC, perspective, target_activity
+    LIMIT $limit
+    """
+    with driver.session(**neo4j_shared.session_kwargs(database)) as session:
+        return [
+            dict(record)
+            for record in session.run(
+                query,
+                min_frequency=min_frequency,
+                limit=limit,
+            )
+        ]

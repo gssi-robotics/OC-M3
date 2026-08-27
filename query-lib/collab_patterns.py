@@ -203,6 +203,23 @@ class CollaborationPatternCypher:
         transition_back = s.df_transition_expr("df_jk", "e_j", "e_k")
         intermediate_duration = s.seconds_between(f"e_j.{s.event_start_prop}", f"e_j.{s.event_end_prop}")
         return_time = s.seconds_between(f"e_i.{s.event_end_prop}", f"e_k.{s.event_start_prop}")
+        segment_consistency = ""
+        if objective_type == "Mission":
+            segment_correlations = [
+                f"EXISTS {{ MATCH {s.event(event)}-{s.rel(s.corr_rel)}->{s.entity(f'segment_{event}')} "
+                f"WHERE {s.type_filter(f'segment_{event}', 'Segment')} }}"
+                for event in ("e_i", "e_j", "e_k")
+            ]
+            segment_consistency = f"""
+                  AND (
+                    NOT ({' AND '.join(segment_correlations)})
+                    OR EXISTS {{
+                      MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('shared_segment')}
+                      MATCH {s.event('e_j')}-{s.rel(s.corr_rel)}->(shared_segment)
+                      MATCH {s.event('e_k')}-{s.rel(s.corr_rel)}->(shared_segment)
+                      WHERE {s.type_filter('shared_segment', 'Segment')}
+                    }}
+                  )"""
         return f"""
                 MATCH {s.event('e_i')}-{s.rel(s.df_rel, 'df_ij')}->{s.event('e_j')}-{s.rel(s.df_rel, 'df_jk')}->{s.event('e_k')}
                 MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('o')}<-{s.rel(s.corr_rel)}-{s.event('e_j')}
@@ -215,6 +232,7 @@ class CollaborationPatternCypher:
                   AND {s.event_type_filter('e_i', 'Task')} AND {s.event_type_filter('e_j', 'Task')}
                   AND {s.event_type_filter('e_k', 'Task')}
                   AND NOT (ro_a)-{s.rel(s.has_rel)}->(c)
+                  {segment_consistency}
                 WITH e_i, e_j, e_k, o, ro_a, ro_b, df_ij, df_jk,
                   collect(DISTINCT c) AS missingCapabilitiesForReturningRobot
                 WHERE size(missingCapabilitiesForReturningRobot) > 0

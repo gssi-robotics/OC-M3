@@ -32,6 +32,7 @@ from collaboration.collaboration_visuals import (
     render_rank_bars,
 )
 from collaboration.timeline_views import render_timeline_tab
+from collaboration.resource_views import render_resource_perspective_tab
 from collaboration.evaluation_views import (
     render_evaluation_workspace,
 )
@@ -189,6 +190,10 @@ def clear_state() -> None:
         "explain_rows",
         "explain_signature",
         "explain_occurrence_index",
+        "resource_payload",
+        "resource_signature",
+        "aggregate_resource_payload",
+        "aggregate_resource_signature",
     ):
         st.session_state.pop(key, None)
 
@@ -259,8 +264,8 @@ def render_page() -> None:
         return
 
     try:
-        tab_evaluation, tab_timeline = st.tabs(
-            ["Evaluation Export", "Collaboration Timeline"]
+        tab_evaluation, tab_timeline, tab_resources = st.tabs(
+            ["Evaluation Export", "Collaboration Timeline", "Resource Perspective"]
         )
         with tab_evaluation:
             render_evaluation_workspace(driver, database, catalog, logs)
@@ -271,6 +276,8 @@ def render_page() -> None:
                 key="timeline_log_filter",
             )
             render_timeline_tab(driver, database, catalog, selected_log)
+        with tab_resources:
+            render_resource_perspective_tab(driver, database, catalog, logs)
     finally:
         driver.close()
 
