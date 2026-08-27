@@ -1,0 +1,8 @@
+task_name,required_capability
+pick,manipulation;movement;localization
+place,manipulation;movement;localization
+move_to,movement;localization
+scan,visual_sensing;localization
+pack,manipulation;localization
+load_pack,loading;movement;localization
+unload_pack,unloading;movement;localization

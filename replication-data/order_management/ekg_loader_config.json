@@ -1,0 +1,94 @@
+{
+  "log_name": "log_1",
+  "event_id": "event_id",
+  "event_activity": "activity",
+  "event_type": "event_type",
+  "event_start": "start_time",
+  "event_end": "end_time",
+  "entity_id": "entity_id",
+  "entity_type_id": "type",
+  "events": {
+    "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/events.csv",
+    "attr": [
+      "event_id",
+      "event_type",
+      "activity",
+      "start_time",
+      "end_time",
+      "robot_id",
+      "mission_id",
+      "segment_id"
+    ],
+    "attr_types": {
+      "event_id": "String",
+      "event_type": "String",
+      "activity": "String",
+      "start_time": "Datetime",
+      "end_time": "Datetime",
+      "robot_id": "String",
+      "mission_id": "String",
+      "segment_id": "String"
+    },
+    "entity_columns": {
+      "Robot": "robot_id",
+      "Mission": "mission_id",
+      "Segment": "segment_id"
+    }
+  },
+  "entities": {
+    "robot_id": {
+      "type": "Robot",
+      "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/robot_table.csv",
+      "event_column": "robot_id",
+      "entity_id": "robot_id",
+      "attr": [
+        "robot_id",
+        "capabilities"
+      ],
+      "attr_types": {
+        "robot_id": "String",
+        "capabilities": "String"
+      },
+      "from_event_table": false
+    },
+    "mission_id": {
+      "type": "Mission",
+      "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/events.csv",
+      "event_column": "mission_id",
+      "entity_id": "mission_id",
+      "attr": [
+        "mission_id"
+      ],
+      "attr_types": {
+        "mission_id": "String"
+      },
+      "from_event_table": true
+    },
+    "segment_id": {
+      "type": "Segment",
+      "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/events.csv",
+      "event_column": "segment_id",
+      "entity_id": "segment_id",
+      "attr": [
+        "segment_id"
+      ],
+      "attr_types": {
+        "segment_id": "String"
+      },
+      "from_event_table": true
+    }
+  },
+  "task_capabilities": {
+    "path": "/Users/sara/Documents/Repo/OC-M3/replication_data/order_management/task_table.csv",
+    "task_column": "task_name",
+    "capability_column": "required_capability",
+    "attr": [
+      "task_name",
+      "required_capability"
+    ],
+    "attr_types": {
+      "task_name": "String",
+      "required_capability": "String"
+    }
+  }
+}

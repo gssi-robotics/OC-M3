@@ -1,0 +1,8 @@
+robot_id,capabilities
+robot1,manipulation;movement;localization
+robot2,manipulation;movement;localization
+robot3,manipulation;movement;localization
+robot4,manipulation;movement;localization
+robot5,visual_sensing;localization 
+robot6,manipulation;localization
+robot7,loading;movement;unloading;localization
