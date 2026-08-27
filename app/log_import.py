@@ -90,6 +90,10 @@ def uniquify_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def normalize_loader_config_paths(config: Dict[str, Any]) -> Dict[str, Any]:
     normalized = json.loads(json.dumps(config))
+    if normalized.get("log_name") and not normalized.get("database_name"):
+        normalized["database_name"] = neo4j_shared.database_name_for_log(
+            normalized["log_name"]
+        )
 
     events = normalized.get("events", {})
     if isinstance(events, dict) and events.get("path"):
@@ -540,6 +544,7 @@ def build_loader_config(
 
     return {
         "log_name": log_name,
+        "database_name": neo4j_shared.database_name_for_log(log_name),
         "event_id": mapping["event_id"],
         "event_activity": mapping["event_activity"],
         "event_type": mapping["event_type"],
@@ -566,6 +571,8 @@ def render_config(config: Dict[str, Any]) -> None:
     st.json(
         {
             "log_name": config["log_name"],
+            "database_name": config.get("database_name")
+            or neo4j_shared.database_name_for_log(config["log_name"]),
             "event_file": config["events"]["path"],
             "event_type_column": config["event_type"],
             "event_attributes": len(config["events"]["attr"]),
@@ -614,6 +621,7 @@ def run_ekg_creation(
     uri: str,
     user: str,
     password: str,
+    database: str,
 ) -> bool:
     driver, error = neo4j_shared.get_neo4j_driver(uri, user, password)
     if driver is None:
@@ -621,10 +629,19 @@ def run_ekg_creation(
         return False
 
     try:
-        with driver.session() as session:
+        neo4j_shared.ensure_database_available(driver, database)
+        with driver.session(**neo4j_shared.session_kwargs(database)) as session:
             for step in steps:
                 session.run(step["query"]).consume()
-        st.success(f"EKG created in Neo4j with {len(steps)} query steps.")
+        known_databases = set(st.session_state.get("shared_ekg_databases", []))
+        known_databases.add(database)
+        st.session_state["shared_ekg_databases"] = sorted(known_databases)
+        st.success(
+            f"EKG created in Neo4j database `{database}` with {len(steps)} query steps."
+        )
+        st.caption(
+            "Select the new database from `Discovered EKG databases` in the sidebar to analyze it."
+        )
         return True
     except Exception as exc:  # noqa: BLE001
         st.error(f"EKG creation started but failed while running queries: {exc}")
@@ -640,16 +657,26 @@ def render_ekg_creation(config: Dict[str, Any]) -> None:
         "If Neo4j is unavailable, the app will show the queries instead."
     )
     neo4j_shared.render_connection_summary()
+    database = str(
+        config.get("database_name")
+        or neo4j_shared.database_name_for_log(config["log_name"])
+    )
+    st.info(
+        f"This log will be loaded into the dedicated database `{database}`. "
+        "After a successful import it becomes available in the database selector."
+    )
 
     c1, c2 = st.columns([1, 2])
     with c1:
         include_cleanup = st.checkbox(
-            "Delete existing nodes for this log first",
+            "Delete existing nodes in this database first",
             value=False,
             key="ekg_cleanup",
         )
     with c2:
-        st.caption("Cleanup adds a first query that clears the current Neo4j database before loading.")
+        st.caption(
+            f"Cleanup clears only `{database}` before loading; other log databases are unaffected."
+        )
 
     if st.button("Create EKG", type="primary", key="create_ekg_button"):
         connection = neo4j_shared.get_connection_settings()
@@ -664,6 +691,7 @@ def render_ekg_creation(config: Dict[str, Any]) -> None:
             uri=connection["uri"],
             user=connection["user"],
             password=connection["password"],
+            database=database,
         )
 
         if not executed_in_neo4j:
@@ -689,7 +717,7 @@ def render_page() -> None:
     with st.sidebar:
         st.header("Settings")
         log_name = st.text_input("Log name", value="log_1")
-        upload_dir = resolve_app_path(st.text_input("Upload storage directory", value="ekg_uploaded_inputs"))
+        upload_dir = resolve_app_path(st.text_input("Upload storage directory", value="ekg_uploaded_inputs")) #needed as Neo4j LOAD CSV needs a readable file path during import
         st.caption(f"App directory: `{APP_DIR}`")
         st.caption(f"Resolved upload directory: `{upload_dir}`")
 
