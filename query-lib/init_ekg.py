@@ -245,8 +245,11 @@ def load_capability_nodes_query(config: Dict[str, Any]) -> str:
 
     return f"""
 LOAD CSV WITH HEADERS FROM {json.dumps(uri)} AS line
-WITH DISTINCT {line_value(cap_col)} AS capability
-WHERE capability IS NOT NULL AND trim(capability) <> ''
+WITH line
+WHERE {line_value(cap_col)} IS NOT NULL AND trim({line_value(cap_col)}) <> ''
+UNWIND split(toString({line_value(cap_col)}), ";") AS raw_capability
+WITH DISTINCT trim(toString(raw_capability)) AS capability
+WHERE capability <> ''
 MERGE (c:Capability {{name: capability}})
 SET c.Log = {json.dumps(log_name)}
 """.strip()
@@ -276,8 +279,11 @@ def load_req_query(config: Dict[str, Any]) -> str:
         WHERE capLine.{cypher_identifier(task_col)} = eventLine.{cypher_identifier(activity_col)}
         AND capLine.{cypher_identifier(cap_col)} IS NOT NULL
         AND trim(capLine.{cypher_identifier(cap_col)}) <> ''
+        UNWIND split(toString(capLine.{cypher_identifier(cap_col)}), ";") AS raw_capability
+        WITH eventLine, trim(toString(raw_capability)) AS capability
+        WHERE capability <> ''
         MATCH (e:Event {{event_id: eventLine.{cypher_identifier(event_id_col)}}})
-        MERGE (c:Capability {{name: capLine.{cypher_identifier(cap_col)}}})
+        MERGE (c:Capability {{name: capability}})
         SET c.Log = {json.dumps(log_name)}
         MERGE (e)-[:REQ]->(c)
         """.strip()

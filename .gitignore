@@ -3,4 +3,5 @@
 .uploaded_inputs
 *__pycache__/
 synthetic_*/
-*ekg_uploaded_inputs/*
+*/ekg_uploaded_inputs/*
+tests/*

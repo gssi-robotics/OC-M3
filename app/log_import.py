@@ -423,7 +423,11 @@ def map_entity_files(
 
 def map_task_capabilities(upload_dir: Path) -> Optional[Dict[str, Any]]:
     st.header("4. Task-required capabilities")
-    st.write("Upload a table associating task/activity names with required capabilities.")
+    st.write(
+        "Upload a table associating task/activity names with required capabilities. "
+        "Use semicolons for tasks requiring multiple capabilities, for example "
+        "`movement;localization`."
+    )
 
     uploaded = st.file_uploader(
         "Task-capability table",
