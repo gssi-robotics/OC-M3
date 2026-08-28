@@ -1,0 +1,6 @@
+task_name,required_capability
+check_room,movement;visual_sensing
+vacuum,movement;vacuuming
+mop,movement;mopping
+disinfect,movement;disinfecting
+final_room_check,movement;visual_sensing

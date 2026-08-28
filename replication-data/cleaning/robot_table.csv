@@ -1,0 +1,10 @@
+robot_id,capabilities
+robot1,movement;vacuuming;disinfecting
+robot2,movement;vacuuming;disinfecting
+robot3,movement;vacuuming;disinfecting
+robot4,movement;mopping;disinfecting
+robot5,movement;mopping;disinfecting
+robot6,movement;mopping;visual_sensing
+robot7,movement;mopping;visual_sensing
+robot8,movement;mopping;visual_sensing
+robot9,movement;mopping;visual_sensing
