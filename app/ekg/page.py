@@ -25,6 +25,7 @@ def clear_state() -> None:
         "agg_edge_limit_reached",
         "agg_result",
         "agg_class_durations",
+        "agg_ekg_summary",
     ):
         st.session_state.pop(key, None)
 
@@ -52,9 +53,18 @@ def _render_connection_gate() -> Optional[Dict[str, str]]:
             st.session_state["agg_connected"] = False
             st.session_state["agg_error"] = error
         else:
-            st.session_state["agg_connected"] = True
-            st.session_state["agg_error"] = None
-            driver.close()
+            try:
+                st.session_state["agg_ekg_summary"] = neo4j_shared.fetch_ekg_summary(
+                    driver,
+                    database,
+                )
+                st.session_state["agg_connected"] = True
+                st.session_state["agg_error"] = None
+            except Exception as exc:  # noqa: BLE001
+                st.session_state["agg_connected"] = False
+                st.session_state["agg_error"] = f"Could not inspect the active EKG: {exc}"
+            finally:
+                driver.close()
 
     if not st.session_state.get("agg_connected", False):
         if st.session_state.get("agg_error"):
@@ -283,6 +293,10 @@ def render_page() -> None:
     connection = _render_connection_gate()
     if connection is None:
         return
+
+    summary = st.session_state.get("agg_ekg_summary")
+    if summary:
+        neo4j_shared.render_ekg_summary_table(summary)
 
     _render_aggregation_controls(connection)
     _render_aggregation_summary()

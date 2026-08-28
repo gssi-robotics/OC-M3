@@ -65,6 +65,58 @@ def discover_ekg_databases(driver: Any) -> List[str]:
         return [str(record["name"]) for record in session.run(query)]
 
 
+def fetch_ekg_summary(driver: Any, database: Optional[str]) -> Dict[str, int]:
+    """Count the main object-centric elements in the active EKG database."""
+    query = """
+    CALL () {
+      MATCH (event:Event)
+      RETURN count(event) AS events,
+             count(CASE WHEN event.Type = 'Task' THEN 1 END) AS task_events,
+             count(CASE WHEN event.Type = 'Control' THEN 1 END) AS control_events,
+             count(DISTINCT event.activity) AS activities
+    }
+    CALL () {
+      MATCH (object:Entity)
+      RETURN count(object) AS objects,
+             count(DISTINCT object.type) AS object_types
+    }
+    CALL () {
+      MATCH (capability:Capability)
+      RETURN count(DISTINCT capability) AS capabilities
+    }
+    RETURN events, task_events, control_events, objects, activities,
+           object_types, capabilities
+    """
+    with driver.session(**session_kwargs(database)) as session:
+        record = session.run(query).single()
+    if record is None:
+        return {
+            "#Events": 0,
+            "#TaskEvents": 0,
+            "#ControlEvents": 0,
+            "#Objects": 0,
+            "#Activities": 0,
+            "#ObjectTypes": 0,
+            "#Capabilities": 0,
+        }
+    return {
+        "#Events": int(record["events"] or 0),
+        "#TaskEvents": int(record["task_events"] or 0),
+        "#ControlEvents": int(record["control_events"] or 0),
+        "#Objects": int(record["objects"] or 0),
+        "#Activities": int(record["activities"] or 0),
+        "#ObjectTypes": int(record["object_types"] or 0),
+        "#Capabilities": int(record["capabilities"] or 0),
+    }
+
+
+def render_ekg_summary_table(summary: Dict[str, int]) -> None:
+    """Render the shared one-row EKG summary table."""
+    st.markdown("#### EKG summary")
+    st.caption("Counts refer to the currently active Neo4j database.")
+    st.dataframe([summary], width="stretch", hide_index=True)
+
+
 def filter_discovered_databases(databases: List[str], query: str) -> List[str]:
     """Filter database names case-insensitively using all search terms."""
     terms = str(query).casefold().split()

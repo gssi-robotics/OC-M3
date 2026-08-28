@@ -194,6 +194,7 @@ def clear_state() -> None:
         "resource_signature",
         "aggregate_resource_payload",
         "aggregate_resource_signature",
+        "collab_ekg_summary",
     ):
         st.session_state.pop(key, None)
 
@@ -230,6 +231,10 @@ def render_page() -> None:
             try:
                 st.session_state["collab_logs"] = fetch_logs(driver, database)
                 st.session_state["collab_mission_ids"] = fetch_mission_ids(driver, database, None)
+                st.session_state["collab_ekg_summary"] = neo4j_shared.fetch_ekg_summary(
+                    driver,
+                    database,
+                )
                 st.session_state["collab_connected"] = True
                 st.session_state["collab_connection_error"] = None
             except Exception as exc:  # noqa: BLE001
@@ -254,6 +259,10 @@ def render_page() -> None:
         return
 
     logs = st.session_state.get("collab_logs", [])
+    summary = st.session_state.get("collab_ekg_summary")
+    if summary:
+        neo4j_shared.render_ekg_summary_table(summary)
+
     if not logs:
         st.warning("No EKG logs were found. Load at least one graph before running the evaluation.")
         return
