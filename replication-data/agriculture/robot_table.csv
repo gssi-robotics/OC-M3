@@ -1,0 +1,9 @@
+robot_id,capabilities
+robot1,movement;visual_sensing
+robot2,movement;visual_sensing
+robot3,movement;visual_sensing;irrigation
+robot4,movement;visual_sensing;irrigation
+robot5,movement;visual_sensing;irrigation
+robot6,movement;visual_sensing;irrigation
+robot7,movement;irrigation;spraying
+robot8,movement;irrigation;spraying

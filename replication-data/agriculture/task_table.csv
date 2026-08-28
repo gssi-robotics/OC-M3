@@ -1,0 +1,5 @@
+task_name,required_capability
+inspect,movement;visual_sensing
+irrigate,movement;irrigation
+spray,movement;spraying
+final_inspection,movement;visual_sensing
