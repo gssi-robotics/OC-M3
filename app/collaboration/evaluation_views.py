@@ -69,7 +69,7 @@ TIME_METRICS = {
     "totalBranchWait",
 }
 
-EVALUATION_DATASET_VERSION = 2
+EVALUATION_DATASET_VERSION = 3
 
 EVALUATION_TABLE_SPECS = (
     ("strategy_summary.csv", "Strategy summary", "summary", "Paper-facing comparison by strategy and objective perspective."),
@@ -167,6 +167,9 @@ def _occurrence_record(
     controls = _control_events(row)
     preparation_events = _preparation_events(row)
     capabilities = _list_ids(row.get("capabilities")) or _list_ids(row.get("sharedRequiredCapabilities"))
+    target_required_capabilities = _list_ids(row.get("targetRequiredCapabilities"))
+    source_missing_capabilities = _list_ids(row.get("sourceMissingTargetCapabilities"))
+    is_handover = _structure_name(query_name) == "Robot handover"
     return {
         "strategy": strategy,
         "structure": _structure_name(query_name),
@@ -198,6 +201,13 @@ def _occurrence_record(
             str(event.get("activity") or "") for event in preparation_events
         ),
         "capabilities": " | ".join(capabilities),
+        "target_required_capabilities": " | ".join(target_required_capabilities),
+        "source_missing_target_capabilities": " | ".join(source_missing_capabilities),
+        "capability_driven_handover": bool(
+            is_handover
+            and target_required_capabilities
+            and source_missing_capabilities
+        ),
         "details_json": _json(row),
     }
 
@@ -611,6 +621,9 @@ def _strategy_summary(payload: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str
             ]
             sequential = [row for row in occurrences if row["structure"] != "Parallel collaboration"]
             handovers = [row for row in occurrences if row["structure"] == "Robot handover"]
+            capability_driven_handovers = [
+                row for row in handovers if row.get("capability_driven_handover") is True
+            ]
             switches = [row for row in occurrences if row["structure"] == "Objective switch"]
             returns = [row for row in occurrences if row["structure"] == "Capability-driven return"]
             summary.append(
@@ -618,6 +631,10 @@ def _strategy_summary(payload: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str
                     "strategy": strategy,
                     "objective_perspective": perspective,
                     "handovers": counts.get("Robot handover", 0),
+                    "capability_driven_handovers": len(capability_driven_handovers),
+                    "capability_driven_handover_share": (
+                        len(capability_driven_handovers) / len(handovers) if handovers else None
+                    ),
                     "objective_switches": counts.get("Objective switch", 0),
                     "capability_driven_returns": counts.get("Capability-driven return", 0),
                     "parallel_collaborations": counts.get("Parallel collaboration", 0),

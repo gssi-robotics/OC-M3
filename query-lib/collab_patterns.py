@@ -153,9 +153,20 @@ class CollaborationPatternCypher:
               [(ro_j)<-[:CORR]-(ce:Event)
                 WHERE ce.Type = 'Control' AND ce.start IS NOT NULL AND ce.end IS NOT NULL
                   AND ce.start <= e_j.start AND e_i.end <= ce.end | ce] AS toRobotControlEvents
+            CALL (e_j, ro_i) {{
+              OPTIONAL MATCH (e_j)-[:REQ]->(targetCapability:Capability)
+              WITH ro_i, collect(DISTINCT targetCapability) AS targetRequiredCapabilities
+              RETURN targetRequiredCapabilities,
+                [capability IN targetRequiredCapabilities
+                  WHERE NOT EXISTS {{ MATCH (ro_i)-[:HAS]->(capability) }} | capability
+                ] AS sourceMissingTargetCapabilities
+            }}
             RETURN e_i, e_j, o AS objective, ro_i AS fromRobot, ro_j AS toRobot,
               transitionTime, fromTaskPreparationEvents, toTaskPreparationEvents,
               fromRobotControlEvents, toRobotControlEvents,
+              targetRequiredCapabilities, sourceMissingTargetCapabilities,
+              size(targetRequiredCapabilities) > 0 AND
+                size(sourceMissingTargetCapabilities) > 0 AS capabilityDriven,
               e_i.{s.event_activity_prop} AS fromActivity, e_j.{s.event_activity_prop} AS toActivity
             ORDER BY objective.{s.entity_id_prop}, e_i.{s.event_start_prop}
             """.strip()
@@ -347,31 +358,45 @@ class CollaborationPatternCypher:
                 """.strip()
 
     def synchronization_diagnostics_parallel_segments(self) -> str:
-        """Synchronization delay and branch waiting for parallel segment pairs.
+        """Find the mission-only Task that joins two overlapping Segment branches.
 
-        For each pair of parallel segments in the same mission, this query finds
-        the first downstream mission-level event after both segments complete.
-        Mission-level events are events correlated with the mission but not with
-        any segment of that mission.
+        A synchronization point is the first Task correlated with the Mission,
+        but with no Segment, after the final Task of both overlapping Segments.
+        This diagnostic is intentionally independent of robot participation and
+        capability requirements.
         """
         s = self.s
-        occurrence_query = self.parallel_collaboration_segment()
         latest_end = "CASE WHEN end1 >= end2 THEN end1 ELSE end2 END"
         sync_delay = s.seconds_between("latestEnd", f"downstreamEvent.{s.event_start_prop}")
         branch_wait_1 = s.seconds_between("end1", f"downstreamEvent.{s.event_start_prop}")
         branch_wait_2 = s.seconds_between("end2", f"downstreamEvent.{s.event_start_prop}")
         return f"""
-              CALL () {{{_indent(occurrence_query, 2)}}}
+              MATCH {s.entity('segment1')}-{s.rel(s.part_of_rel)}->{s.entity('mission')}<-{s.rel(s.part_of_rel)}-{s.entity('segment2')}
+              WHERE {s.type_filter('segment1', 'Segment')}
+                AND {s.type_filter('segment2', 'Segment')}
+                AND {s.type_filter('mission', 'Mission')}
+                AND segment1.{s.entity_id_prop} < segment2.{s.entity_id_prop}
+              MATCH {s.entity('segment1')}<-{s.rel(s.corr_rel)}-{s.event('branchEvent1')}-{s.rel(s.corr_rel)}->{s.entity('mission')}
+              WHERE {s.event_type_filter('branchEvent1', 'Task')}
+              WITH segment1, segment2, mission,
+                min(branchEvent1.{s.event_start_prop}) AS start1,
+                max(branchEvent1.{s.event_end_prop}) AS end1
+              MATCH {s.entity('segment2')}<-{s.rel(s.corr_rel)}-{s.event('branchEvent2')}-{s.rel(s.corr_rel)}->{s.entity('mission')}
+              WHERE {s.event_type_filter('branchEvent2', 'Task')}
+              WITH segment1, segment2, mission, start1, end1,
+                min(branchEvent2.{s.event_start_prop}) AS start2,
+                max(branchEvent2.{s.event_end_prop}) AS end2
+              WHERE start1 < end2 AND start2 < end1
               WITH mission, segment1, segment2, end1, end2, {latest_end} AS latestEnd
               MATCH {s.entity('mission')}<-{s.rel(s.corr_rel)}-{s.event('candidate')}
               WHERE candidate.{s.event_start_prop} >= latestEnd
                 AND {s.event_type_filter('candidate', 'Task')}
                 AND NOT EXISTS {{
-                  MATCH {s.event('candidate')}-{s.rel(s.corr_rel)}->{s.entity('seg')}-{s.rel(s.part_of_rel)}->{s.entity('mission')}
+                  MATCH {s.event('candidate')}-{s.rel(s.corr_rel)}->{s.entity('seg')}
                   WHERE {s.type_filter('seg', 'Segment')}
                 }}
               WITH mission, segment1, segment2, end1, end2, latestEnd, candidate
-              ORDER BY candidate.{s.event_start_prop} ASC
+              ORDER BY candidate.{s.event_start_prop} ASC, candidate.{s.event_id_prop} ASC
               WITH mission, segment1, segment2, end1, end2, latestEnd, head(collect(candidate)) AS downstreamEvent
               WHERE downstreamEvent IS NOT NULL
               RETURN mission, segment1, segment2, downstreamEvent, latestEnd, 
