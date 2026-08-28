@@ -65,6 +65,18 @@ def discover_ekg_databases(driver: Any) -> List[str]:
         return [str(record["name"]) for record in session.run(query)]
 
 
+def filter_discovered_databases(databases: List[str], query: str) -> List[str]:
+    """Filter database names case-insensitively using all search terms."""
+    terms = str(query).casefold().split()
+    if not terms:
+        return list(databases)
+    return [
+        database
+        for database in databases
+        if all(term in database.casefold() for term in terms)
+    ]
+
+
 def set_active_database(database: str) -> None:
     """Set the shared database and invalidate results from the previous graph."""
     database = str(database).strip()
@@ -164,15 +176,33 @@ def render_shared_connection_controls() -> None:
     databases = list(st.session_state.get("shared_ekg_databases", []))
     if databases:
         current = str(st.session_state.get("shared_neo4j_database", ""))
-        index = databases.index(current) if current in databases else None
-        st.selectbox(
-            "Discovered EKG databases",
-            options=databases,
-            index=index,
-            placeholder="Select an EKG database",
-            key="shared_neo4j_database_selector",
-            on_change=_select_discovered_database,
+        st.markdown("**Discovered EKG databases**")
+        search = st.text_input(
+            "Filter discovered EKG databases",
+            key="shared_ekg_database_filter",
+            placeholder="Filter by execution, strategy, seed...",
+            label_visibility="collapsed",
         )
+        filtered_databases = filter_discovered_databases(databases, search)
+        st.caption(f"Showing {len(filtered_databases)} of {len(databases)} databases")
+
+        if not filtered_databases:
+            st.info("No discovered database matches the current filter.")
+        else:
+            selector_key = "shared_neo4j_database_selector"
+            if st.session_state.get(selector_key) not in filtered_databases:
+                st.session_state.pop(selector_key, None)
+            index = filtered_databases.index(current) if current in filtered_databases else None
+            with st.container(height=260, border=True):
+                st.radio(
+                    "Discovered EKG databases",
+                    options=filtered_databases,
+                    index=index,
+                    key=selector_key,
+                    on_change=_select_discovered_database,
+                    label_visibility="collapsed",
+                    width="stretch",
+                )
 
 
 def render_connection_summary() -> None:
