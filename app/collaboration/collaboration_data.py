@@ -4,7 +4,7 @@ import importlib.util
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import neo4j_shared
 
@@ -283,6 +283,53 @@ def extract_multi_pattern_transitions(
     for pattern_name in selected_patterns:
         transitions.extend(extract_pattern_transitions(pattern_rows_by_name.get(pattern_name, []), mission_events, pattern_name))
     return transitions
+
+
+def extract_cross_mission_switches(
+    rows: List[Dict[str, Any]],
+    mission_events_by_id: Mapping[str, List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Anchor Mission-switch occurrences across selected mission timelines."""
+    events_by_mission = {
+        str(mission_id): {
+            str(event.get("event_id")): event
+            for event in events
+            if event.get("event_id") is not None
+        }
+        for mission_id, events in mission_events_by_id.items()
+    }
+    switches: List[Dict[str, Any]] = []
+    for row in rows:
+        from_mission = node_id(row.get("fromObjective"))
+        to_mission = node_id(row.get("toObjective"))
+        from_event_id = event_id_from_mapping(row.get("e_i"))
+        to_event_id = event_id_from_mapping(row.get("e_j"))
+        if (
+            not from_mission
+            or not to_mission
+            or from_mission == to_mission
+            or not from_event_id
+            or not to_event_id
+        ):
+            continue
+        from_event = events_by_mission.get(from_mission, {}).get(from_event_id)
+        to_event = events_by_mission.get(to_mission, {}).get(to_event_id)
+        if not from_event or not to_event:
+            continue
+        robot_id = node_id(row.get("robot")) or str(from_event.get("robot_id") or "unassigned")
+        switches.append(
+            {
+                "from_mission_id": from_mission,
+                "to_mission_id": to_mission,
+                "from_event_id": from_event_id,
+                "to_event_id": to_event_id,
+                "robot_id": robot_id,
+                "from_event": from_event,
+                "to_event": to_event,
+                "row": row,
+            }
+        )
+    return switches
 
 
 def extract_structural_highlights(

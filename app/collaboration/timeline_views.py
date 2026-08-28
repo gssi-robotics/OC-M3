@@ -11,6 +11,7 @@ import streamlit.components.v1 as components
 
 from .collaboration_data import (
     build_timeline_summary,
+    extract_cross_mission_switches,
     extract_multi_pattern_transitions,
     extract_structural_highlights,
     fetch_mission_events,
@@ -503,6 +504,7 @@ def render_robot_activity_lanes_over_missions_plotly(
     mission_events_by_id: Mapping[str, List[Dict[str, Any]]],
     large_view: bool,
     robot_ids: Optional[Sequence[str]] = None,
+    mission_switches: Optional[List[Dict[str, Any]]] = None,
 ) -> Any:
     """Robot-lane event timeline for all selected missions.
 
@@ -651,6 +653,61 @@ def render_robot_activity_lanes_over_missions_plotly(
                 showlegend=False,
             ))
 
+    shown_switch_legend = False
+    for switch in mission_switches or []:
+        from_mission = str(switch.get("from_mission_id") or "")
+        to_mission = str(switch.get("to_mission_id") or "")
+        robot_id = str(switch.get("robot_id") or "unassigned")
+        from_event = switch.get("from_event") or {}
+        to_event = switch.get("to_event") or {}
+        from_lane = y_map.get((from_mission, robot_id))
+        to_lane = y_map.get((to_mission, robot_id))
+        if (
+            from_lane is None
+            or to_lane is None
+            or not isinstance(from_event.get("end_ms"), (int, float))
+            or not isinstance(to_event.get("start_ms"), (int, float))
+        ):
+            continue
+        source_x = (float(from_event["end_ms"]) - base_ms) / 1000.0
+        target_x = (float(to_event["start_ms"]) - base_ms) / 1000.0
+        row = switch.get("row") or {}
+        hover = _hover_html(
+            "Robot Mission switch",
+            [
+                ("robot", robot_id),
+                ("from_mission", from_mission),
+                ("to_mission", to_mission),
+                ("from_event", switch.get("from_event_id")),
+                ("from_activity", from_event.get("activity")),
+                ("to_event", switch.get("to_event_id")),
+                ("to_activity", to_event.get("activity")),
+                ("switchTime", format_seconds(row.get("switchTime"))),
+            ],
+            row,
+        )
+        fig.add_trace(go.Scatter(
+            name="Mission switch",
+            x=[source_x, target_x],
+            y=[from_lane, to_lane],
+            mode="lines+markers+text",
+            line=dict(color="#DC2626", width=2.4, dash="dash"),
+            marker=dict(
+                color=["white", "#DC2626"],
+                size=[9, 12],
+                symbol=["circle", "triangle-right"],
+                line=dict(color="#DC2626", width=2),
+            ),
+            text=["", f"SW {from_mission} -> {to_mission}"],
+            textposition="middle right",
+            textfont=dict(color="#B91C1C", size=9),
+            customdata=[[hover], [hover]],
+            hovertemplate="%{customdata[0]}<extra></extra>",
+            legendgroup="mission_switch",
+            showlegend=not shown_switch_legend,
+        ))
+        shown_switch_legend = True
+
     # Activity legend traces.
     for activity in all_activities:
         fig.add_trace(go.Bar(
@@ -707,7 +764,7 @@ def render_robot_activity_lanes_over_missions_plotly(
     fig.update_layout(
         title=dict(
             text="Robot Activity Lanes Across Missions"
-            "<br><sup>Each mission is grouped as a separate lane block; fills encode activity and borders encode fragment membership.</sup>",
+            "<br><sup>Mission blocks contain robot events; dashed red links show robot switches between Missions.</sup>",
             x=0.02,
             xanchor="left",
             y=0.98,
@@ -1386,17 +1443,22 @@ def render_collaboration_timeline_page(
         selected_patterns=selected_patterns,
         large_view=large_view,
     )
+    mission_switches = extract_cross_mission_switches(
+        pattern_rows_by_name.get("objective_switch_mission", []),
+        mission_events_by_id,
+    ) if "objective_switch_mission" in selected_patterns else []
     robot_activity_lanes_fig = render_robot_activity_lanes_over_missions_plotly(
         mission_events_by_id=mission_events_by_id,
         large_view=large_view,
         robot_ids=robot_ids,
+        mission_switches=mission_switches,
     )
     overview_config = {"scrollZoom": True, "displayModeBar": True, "displaylogo": False, "responsive": True}
     overview_html = (
         "<html><head><meta charset='utf-8'><title>All Missions Overview</title></head>"
         "<body style='font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:18px 24px;'>"
         "<h2>All-missions overview</h2>"
-        "<p>Mission duration is plotted on a normalized global relative-time axis. The robot-lane chart shows concrete robot events per mission, so parallel robot work is visible as overlapping bars on different robot lanes.</p>"
+        "<p>Mission duration is plotted on a normalized global relative-time axis. The robot-lane chart shows concrete events per mission, with dashed red links for robot Mission switches.</p>"
         f"{pio.to_html(overview_fig, full_html=False, include_plotlyjs='cdn', config=overview_config)}"
         f"{pio.to_html(robot_activity_lanes_fig, full_html=False, include_plotlyjs=False, config=overview_config)}"
         "</body></html>"
@@ -1406,13 +1468,13 @@ def render_collaboration_timeline_page(
         {"label": "Overview missions", "value": str(len(mission_events_by_id)), "caption": "Compact mission rows", "accent": "#2563EB"},
         {"label": "Detail panels", "value": str(len(detail_mission_ids)), "caption": "Selected missions below", "accent": "#059669"},
         {"label": "Selected patterns", "value": str(len(selected_patterns)), "caption": "Markers, badges, and links", "accent": "#D97706"},
-        {"label": "Encoding", "value": "2 views", "caption": "Mission duration + robot lanes", "accent": "#7C3AED"},
+        {"label": "Mission switches", "value": str(len(mission_switches)), "caption": "Anchored cross-Mission robot transitions", "accent": "#DC2626"},
     ])
 
     st.markdown("### 1. All-missions overview")
     st.caption(
         "Each row is a mission. The first chart shows only the mission duration on a global relative-time axis. "
-        "The second chart shows robot-event lanes per mission; parallel work is visible when events overlap horizontally across robot lanes of the same mission."
+        "The second chart shows robot-event lanes per mission; dashed red SW links show a robot moving from one Mission to another."
     )
     render_open_html_button(overview_html, button_label="Open all-missions overview in new browser tab", unique_id="all_missions_overview")
     st.plotly_chart(overview_fig, width="stretch", config=overview_config, key="timeline_all_missions_duration_overview")

@@ -802,8 +802,26 @@ def _render_performance_context(payload: Dict[str, List[Dict[str, Any]]]) -> Non
         "transition_count",
     )
     with event_columns[2]:
-        st.metric("Avg robot activity transition", format_seconds(transition_value) or "n/a")
+        st.metric("Avg Robot DF_Control transition", format_seconds(transition_value) or "n/a")
         st.caption(f"Across {transition_count:,} DF_Control transitions")
+
+    df_columns = st.columns(3)
+    for column, perspective in zip(df_columns, ("Mission", "Segment", "Robot")):
+        value, count = _weighted_summary_average(
+            (
+                row for row in transition_rows
+                if row.get("sequence") == "Task DF"
+                and row.get("perspective") == perspective
+            ),
+            "avg_transition_seconds",
+            "transition_count",
+        )
+        with column:
+            st.metric(
+                f"Avg {perspective} DF transition",
+                format_seconds(value) or "n/a",
+            )
+            st.caption(f"Across {count:,} Task DF transitions")
 
     entity_tab, activity_tab, transition_tab = st.tabs(
         ["Entity durations", "Activity durations", "Activity transitions"]
