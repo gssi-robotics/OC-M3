@@ -8,6 +8,7 @@ import streamlit as st
 
 from .collaboration_utils import (
     ALL_OPTION,
+    event_id_from_mapping,
     format_seconds,
     humanize_name,
     node_id,
@@ -1094,6 +1095,28 @@ def render_capability_return_motifs(rows: List[Dict[str, Any]]) -> None:
     motifs = sorted(motifs, key=lambda item: (-item["count"], item["capability"]))
     _plot_table(motifs, "No capability-return motifs found.")
 
+
+def capability_return_evidence_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Project complete A-B-A event triples for occurrence-level validation."""
+    evidence: List[Dict[str, Any]] = []
+    for row in rows:
+        returning_robot = node_id(row.get("returningRobot")) or "unknown"
+        evidence.append(
+            {
+                "objective": node_id(row.get("objective")) or "unknown",
+                "event_1": event_id_from_mapping(row.get("e_i")) or "missing",
+                "robot_1": returning_robot,
+                "event_2": event_id_from_mapping(row.get("e_j")) or "missing",
+                "robot_2": node_id(row.get("intermediateRobot")) or "unknown",
+                "event_3": event_id_from_mapping(row.get("e_k")) or "missing",
+                "robot_3": returning_robot,
+                "capabilities": " | ".join(_capability_ids(row.get("capabilities"))),
+                "return_time_seconds": _metric_value(row, ["returnTime"]),
+                "perspective": row.get("_pattern_view"),
+            }
+        )
+    return evidence
+
 def render_capability_diagnostics_tab(driver: Any, database: Optional[str], catalog: Dict[str, Dict[str, str]], log_name: Optional[str]) -> None:
     st.subheader("Capability Diagnostics")
     st.caption("Compare objective-level capability demand with provider availability and inspect capability-driven returns.")
@@ -1125,3 +1148,12 @@ def render_capability_diagnostics_tab(driver: Any, database: Optional[str], cata
         _plot_table(demand_rows)
         st.markdown("**Capability-driven return summary**")
         _plot_table(diagnostic_rows)
+    with st.expander("Concrete capability-return triples", expanded=False):
+        st.caption(
+            "Every valid occurrence is A-B-A: event 1 and event 3 are executed "
+            "by the same returning robot."
+        )
+        _plot_table(
+            capability_return_evidence_rows(occurrence_rows),
+            "No complete capability-return triples found.",
+        )

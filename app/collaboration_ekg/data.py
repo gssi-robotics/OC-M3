@@ -108,6 +108,22 @@ def _objective_switch_match_fragment() -> str:
 
 
 def _capability_return_match_fragment(objective_type: str) -> str:
+    segment_consistency = ""
+    if objective_type == "Mission":
+        segment_consistency = """
+          AND (
+            NOT (
+              EXISTS { MATCH (e1)-[:CORR]->(:Entity {type: 'Segment'}) }
+              AND EXISTS { MATCH (e2)-[:CORR]->(:Entity {type: 'Segment'}) }
+              AND EXISTS { MATCH (e3)-[:CORR]->(:Entity {type: 'Segment'}) }
+            )
+            OR EXISTS {
+              MATCH (e1)-[:CORR]->(shared_segment:Entity {type: 'Segment'})
+              MATCH (e2)-[:CORR]->(shared_segment)
+              MATCH (e3)-[:CORR]->(shared_segment)
+            }
+          )
+        """
     return f"""
         MATCH (c1:Class)<-[:{OBS_REL}]-(e1:Event)-[df1:{DF_REL}]->(e2:Event)-[df2:{DF_REL}]->(e3:Event)-[:{OBS_REL}]->(c3:Class)
         MATCH (e1)-[:{CORR_REL}]->(o:Entity {{type: $objective_type}})<-[:{CORR_REL}]-(e2)
@@ -120,6 +136,9 @@ def _capability_return_match_fragment(objective_type: str) -> str:
           AND NOT (returning)-[:HAS]->(cap)
           AND {_df_type_expr('df1')} = $objective_type
           AND {_df_type_expr('df2')} = $objective_type
+          AND toString(df1.perspective_id) = toString(o.id)
+          AND toString(df2.perspective_id) = toString(o.id)
+          {segment_consistency}
     """.strip()
 
 
@@ -272,7 +291,7 @@ def fetch_pattern_occurrence_rows(
     pattern: str,
     objective_type: str,
 ) -> List[Dict[str, Any]]:
-    return run_query(
+    rows = run_query(
         driver,
         database,
         pattern_occurrence_query(pattern, objective_type),
@@ -280,6 +299,24 @@ def fetch_pattern_occurrence_rows(
             "objective_type": objective_type,
         },
     )
+    if pattern != "Capability-driven return":
+        return rows
+
+    # A return is a three-event A-B-A structure. Never expose a partial row as
+    # an occurrence even if malformed legacy data reaches this view.
+    required_fields = (
+        "from_event",
+        "intermediate_event",
+        "return_event",
+        "returning_robot",
+        "intermediate_robot",
+    )
+    return [
+        row
+        for row in rows
+        if all(row.get(field) is not None and str(row.get(field)).strip() for field in required_fields)
+        and str(row["returning_robot"]) != str(row["intermediate_robot"])
+    ]
 
 
 def aggregate_occurrence_rows(

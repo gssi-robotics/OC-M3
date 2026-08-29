@@ -1042,6 +1042,64 @@ def render_robot_event_timeline_plotly(
             short = pattern_short(pattern_name)
             if not _is_event_link_short(short) or not _item_visible(short, emphasis_mode):
                 continue
+            if short == "CR" and transition.get("intermediate_event_id"):
+                first = by_id.get(str(transition["from_event_id"]))
+                intermediate = by_id.get(str(transition["intermediate_event_id"]))
+                returned = by_id.get(str(transition["to_event_id"]))
+                if not first or not intermediate or not returned:
+                    continue
+                returning_robot = str(
+                    transition.get("returning_robot_id") or first["robot_id"]
+                )
+                intermediate_robot = str(
+                    transition.get("intermediate_robot_id") or intermediate["robot_id"]
+                )
+                if returning_robot not in y_map or intermediate_robot not in y_map:
+                    continue
+                color = edge_colors.get(pattern_name, "#DC2626")
+                opacity = _opacity_for_kind(short, emphasis_mode, 0.95)
+                style = _edge_style(pattern_name)
+                occurrence_index = int(transition.get("occurrence_index") or 0)
+                offset = ((occurrence_index - 1) % 5 - 2) * 0.08
+                returning_y = float(y_map[returning_robot]) + offset
+                intermediate_y = float(y_map[intermediate_robot]) + offset
+                first_end = float(first["end_s"])
+                intermediate_start = float(intermediate["start_s"])
+                intermediate_end = float(intermediate["end_s"])
+                return_start = float(returned["start_s"])
+                hover = pattern_edge_hover_html(
+                    pattern_name, transition, first, returned
+                )
+
+                # One trace preserves occurrence identity and makes A-B-A explicit.
+                fig.add_trace(go.Scatter(
+                    x=[first_end, intermediate_start, intermediate_end, return_start],
+                    y=[returning_y, intermediate_y, intermediate_y, returning_y],
+                    mode="lines+markers",
+                    name=humanize_name(pattern_name),
+                    legendgroup=pattern_name,
+                    showlegend=pattern_name not in shown,
+                    line=dict(color=color, width=3, dash=style["dash"]),
+                    marker=dict(color=color, size=6, symbol=style["symbol"], opacity=opacity),
+                    opacity=opacity,
+                    hoverinfo="skip",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=[(intermediate_start + intermediate_end) / 2.0],
+                    y=[intermediate_y],
+                    mode="markers+text",
+                    name=humanize_name(pattern_name),
+                    legendgroup=pattern_name,
+                    showlegend=False,
+                    marker=dict(color="white", size=12, symbol=style["symbol"], line=dict(color=color, width=2), opacity=opacity),
+                    text=[f"CR{occurrence_index}"],
+                    textposition="top center",
+                    textfont=dict(color=color, size=9),
+                    customdata=[[hover]],
+                    hovertemplate="%{customdata[0]}<extra></extra>",
+                ))
+                shown.add(pattern_name)
+                continue
             left = by_id.get(str(transition["from_event_id"]))
             right = by_id.get(str(transition["to_event_id"]))
             if not left or not right:

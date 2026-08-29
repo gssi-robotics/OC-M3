@@ -318,10 +318,23 @@ def compute_resource_metrics(
         involved_capable = capable & involved_robots
         actually_used = used_by_capability.get(capability, set())
         required_count = int(demand["required_task_executions"])
+        provider_count = len(capable)
+        team_size = len(all_robots)
         availability_rows.append({
             "capability": capability,
             "required_task_executions": required_count,
             "required_task_percentage": demand["task_percentage"],
+            "availability": provider_count,
+            "team_size": team_size,
+            "availability_rate": (
+                provider_count / team_size if team_size else None
+            ),
+            "availability_percentage": (
+                provider_count / team_size * 100.0 if team_size else None
+            ),
+            "demand_availability": (
+                required_count / provider_count if provider_count else None
+            ),
             "capable_robots": sorted(capable),
             "involved_capable_robots": sorted(involved_capable),
             "actually_used_robots": sorted(actually_used),
@@ -620,7 +633,8 @@ def compute_aggregated_capability_metrics(
             demand_tasks[capability] += int(row["required_task_executions"])
             demand_objectives[capability].add(key)
         for row in item.get("capability_availability", []):
-            providers[str(row["capability"])].update(str(robot) for robot in row["capable_robots"])
+            capability = str(row["capability"])
+            providers[capability].update(str(robot) for robot in row["capable_robots"])
         for row in item.get("capability_utilization", []):
             count = int(row["task_count"])
             if count <= 0:
@@ -709,6 +723,22 @@ def compute_aggregated_resource_metrics(
         if isinstance(row.get("dominance"), (int, float))
     ]
     robot_counts = [float(row["robot_count"]) for row in objective_rows]
+    demand_availability_rows = [
+        {
+            "log_name": str(item.get("objective", {}).get("log_name") or ""),
+            "objective_type": str(item.get("objective", {}).get("objective_type") or ""),
+            "objective_id": str(item.get("objective", {}).get("objective_id") or ""),
+            "capability": str(row["capability"]),
+            "req_count": int(row["required_task_executions"]),
+            "availability": int(row["availability"]),
+            "team_size": int(row["team_size"]),
+            "availability_rate": row.get("availability_rate"),
+            "availability_percentage": row.get("availability_percentage"),
+            "demand_availability": row.get("demand_availability"),
+        }
+        for item in instances
+        for row in item.get("capability_availability", [])
+    ]
 
     payload: Dict[str, Any] = {
         "summary": {
@@ -725,6 +755,7 @@ def compute_aggregated_resource_metrics(
         "robot_participation": participation,
         "robot_contribution_summary": contribution_summary,
         "robot_contribution_distribution": contribution_distribution,
+        "capability_demand_availability": demand_availability_rows,
         **objective_distributions,
         **capabilities,
     }

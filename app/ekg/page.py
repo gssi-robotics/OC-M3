@@ -134,10 +134,23 @@ def _render_aggregation_summary() -> None:
     if not result:
         return
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Class nodes", result["classes"])
+    c1.caption(
+        f"{result.get('task_classes', 0):,} Task + "
+        f"{result.get('control_classes', 0):,} Control"
+    )
     c2.metric("Observed events", result["observed_events"])
+    c2.caption(
+        f"{result.get('observed_task_events', 0):,} Task + "
+        f"{result.get('observed_control_events', 0):,} Control"
+    )
     c3.metric("DF_C edges", result["dfc_edges"])
+    c4.metric("DF_C_Control edges", result.get("dfc_control_edges", 0))
+    c4.caption(
+        f"Control -> Task: {result.get('control_to_task_edges', 0):,} | "
+        f"Task -> Control: {result.get('task_to_control_edges', 0):,}"
+    )
 
     duration_rows = st.session_state.get("agg_class_durations", [])
     if duration_rows:
@@ -286,8 +299,9 @@ def render_page() -> None:
     st.title("Personalized EKG Aggregation")
     st.write(
         "Choose the Mission, Robot, and Segment granularity. The application "
-        "creates `:Class` nodes, `:OBS` relationships, and aggregated "
-        "`:DF_C` relationships."
+        "creates typed `:Class:Task` and `:Class:Control` nodes, `:OBS` relationships, "
+        "and aggregated `:DF_C` and `:DF_C_Control` relationships. Control classes "
+        "are materialized in Neo4j but intentionally hidden from the Class DFG visualization."
     )
 
     connection = _render_connection_gate()

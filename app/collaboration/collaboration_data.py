@@ -16,6 +16,7 @@ from .collaboration_utils import (
     normalize_value,
     pattern_edge_metric_label,
     pattern_family,
+    pattern_short,
 )
 
 
@@ -257,6 +258,31 @@ def extract_pattern_transitions(rows: List[Dict[str, Any]], mission_events: List
     event_pairs = [("e_i", "e_j"), ("e_j", "e_k"), ("e1", "e2"), ("e2", "e3")]
 
     for index, row in enumerate(rows, start=1):
+        if pattern_short(pattern_name) == "CR":
+            event_keys = (
+                ("e_i", "e_j", "e_k")
+                if row.get("e_i") is not None
+                else ("e1", "e2", "e3")
+            )
+            event_ids = [event_id_from_mapping(row.get(key)) for key in event_keys]
+            if all(event_ids) and all(str(event_id) in mission_event_ids for event_id in event_ids):
+                transitions.append(
+                    {
+                        "from_event_id": str(event_ids[0]),
+                        "intermediate_event_id": str(event_ids[1]),
+                        "to_event_id": str(event_ids[2]),
+                        "event_ids": [str(event_id) for event_id in event_ids],
+                        "returning_robot_id": node_id(row.get("returningRobot")),
+                        "intermediate_robot_id": node_id(row.get("intermediateRobot")),
+                        "label": f"capability return {index}",
+                        "pair": "e_i->e_j->e_k",
+                        "occurrence_index": index,
+                        "pattern_name": pattern_name,
+                        "row": row,
+                    }
+                )
+            continue
+
         for left_key, right_key in event_pairs:
             pair = f"{left_key}->{right_key}"
             left_id = event_id_from_mapping(row.get(left_key))

@@ -199,13 +199,40 @@ def render_capability_availability(payload: Mapping[str, Any]) -> None:
         return
     table = pd.DataFrame([{
         "Capability": row["capability"],
-        "Required task executions": row["required_task_executions"],
-        "Demand (%)": round(float(row["required_task_percentage"]), 2),
+        "reqCount(c,o)": row["required_task_executions"],
+        "availability(c)": row["availability"],
+        "|R|": row["team_size"],
+        "availabilityRate(c) (%)": (
+            round(float(row["availability_percentage"]), 1)
+            if row.get("availability_percentage") is not None else None
+        ),
+        "demandAvailability(c,o)": (
+            round(float(row["demand_availability"]), 3)
+            if row.get("demand_availability") is not None else None
+        ),
         "Capable robots": ", ".join(row["capable_robots"]) or "none declared",
         "Involved capable robots": ", ".join(row["involved_capable_robots"]) or "none",
         "Actually used robots": ", ".join(row["actually_used_robots"]) or "none",
     } for row in rows])
     st.dataframe(table, width="stretch", hide_index=True)
+    st.caption(
+        "For the selected objective o: demandAvailability(c,o) = reqCount(c,o) / "
+        "availability(c). reqCount uses distinct Task events requiring c; availability "
+        "uses distinct robots declared capable of c in the selected execution. "
+        "availabilityRate(c) = availability(c) / |R| x 100, where |R| is the complete "
+        "robot roster for that execution. Ratios with a zero denominator are undefined."
+    )
+    objective = dict(payload.get("objective", {}))
+    st.download_button(
+        "Download objective demandAvailability (.csv)",
+        data=table.to_csv(index=False).encode("utf-8"),
+        file_name=(
+            f"demand_availability_{objective.get('type', 'objective')}_"
+            f"{objective.get('id', 'selected')}.csv"
+        ),
+        mime="text/csv",
+        key="resource_objective_demand_availability_download",
+    )
 
 
 def render_collaboration_counts(payload: Mapping[str, Any]) -> None:
@@ -558,6 +585,7 @@ def _render_objective_distributions(payload: Mapping[str, Any]) -> None:
 
 def _render_aggregate_capabilities(payload: Mapping[str, Any]) -> None:
     demand = list(payload.get("capability_demand", []))
+    demand_availability = list(payload.get("capability_demand_availability", []))
     st.markdown("### Capability Demand")
     st.caption(
         "Event-level demand counts required Task executions; objective frequency uses all selected "
@@ -566,6 +594,39 @@ def _render_aggregate_capabilities(payload: Mapping[str, Any]) -> None:
     if not demand:
         st.info("No capability requirements are available for the selected objectives.")
         return
+    paper_table = pd.DataFrame([{
+        "Execution / log": row["log_name"],
+        "Objective type": row["objective_type"],
+        "Objective ID (o)": row["objective_id"],
+        "Capability (c)": row["capability"],
+        "reqCount(c,o)": row["req_count"],
+        "availability(c)": row["availability"],
+        "|R|": row["team_size"],
+        "availabilityRate(c) (%)": (
+            round(float(row["availability_percentage"]), 1)
+            if row.get("availability_percentage") is not None else None
+        ),
+        "demandAvailability(c,o)": (
+            round(float(row["demand_availability"]), 3)
+            if row.get("demand_availability") is not None else None
+        ),
+    } for row in demand_availability])
+    st.markdown("#### Demand-to-availability values by objective")
+    st.caption(
+        "Each row implements the paper definition directly: demandAvailability(c,o) "
+        "= reqCount(c,o) / availability(c). availabilityRate(c) = availability(c) / "
+        "|R| x 100 expresses the percentage of the execution team able to provide c. "
+        "No averaging or pooling is applied."
+    )
+    st.dataframe(paper_table, width="stretch", hide_index=True)
+    st.download_button(
+        "Download demandAvailability values (.csv)",
+        data=paper_table.to_csv(index=False).encode("utf-8"),
+        file_name="resource_perspective_demand_availability.csv",
+        mime="text/csv",
+        key="aggregate_demand_availability_download",
+    )
+    st.markdown("#### Visual exploration")
     go = _plotly_graph_objects()
     fig = go.Figure(go.Bar(
         x=[row["total_task_executions"] for row in demand],
