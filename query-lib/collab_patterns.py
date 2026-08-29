@@ -112,6 +112,26 @@ class CollaborationPatternCypher:
         from_robot_pred = s.df_perspective_predicate("df_ro_ik", "ro_i", "Robot")
         to_robot_pred = s.df_perspective_predicate("df_ro_lj", "ro_j", "Robot")
         transition_expr = s.df_transition_expr("df", "e_i", "e_j")
+        segment_consistency = ""
+        if objective_type == "Mission":
+            segment_consistency = f"""
+              AND (
+                NOT (
+                  EXISTS {{
+                    MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('segment_i')}
+                    WHERE {s.type_filter('segment_i', 'Segment')}
+                  }}
+                  AND EXISTS {{
+                    MATCH {s.event('e_j')}-{s.rel(s.corr_rel)}->{s.entity('segment_j')}
+                    WHERE {s.type_filter('segment_j', 'Segment')}
+                  }}
+                )
+                OR EXISTS {{
+                  MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('shared_segment')}
+                  MATCH {s.event('e_j')}-{s.rel(s.corr_rel)}->(shared_segment)
+                  WHERE {s.type_filter('shared_segment', 'Segment')}
+                }}
+              )"""
         return f"""
             MATCH {s.event('e_i')}-{s.rel(s.df_rel, 'df')}->{s.event('e_j')}
             MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('o')}<-{s.rel(s.corr_rel)}-{s.event('e_j')}
@@ -125,6 +145,7 @@ class CollaborationPatternCypher:
                 MATCH {s.event('e_k')}-{s.rel(s.corr_rel)}->{s.entity('o')}
                 MATCH {s.event('e_k')}-{s.rel(s.corr_rel)}->{s.entity('ro_i')}
                 WHERE {from_robot_pred}
+                  AND {s.event_type_filter('e_k', 'Task')}
                   AND e_k.{s.event_start_prop} IS NOT NULL
                   AND e_k.{s.event_end_prop} IS NOT NULL
                   AND e_j.{s.event_start_prop} IS NOT NULL
@@ -137,6 +158,7 @@ class CollaborationPatternCypher:
                 MATCH {s.event('e_l')}-{s.rel(s.corr_rel)}->{s.entity('o')}
                 MATCH {s.event('e_l')}-{s.rel(s.corr_rel)}->{s.entity('ro_j')}
                 WHERE {to_robot_pred}
+                  AND {s.event_type_filter('e_l', 'Task')}
                   AND e_l.{s.event_start_prop} IS NOT NULL
                   AND e_l.{s.event_end_prop} IS NOT NULL
                   AND e_i.{s.event_start_prop} IS NOT NULL
@@ -144,6 +166,7 @@ class CollaborationPatternCypher:
                   AND e_l.{s.event_start_prop} < e_i.{s.event_end_prop}
                   AND e_i.{s.event_start_prop} < e_l.{s.event_end_prop}
               }}
+              {segment_consistency}
             WITH e_i, e_j, o, ro_i, ro_j, df, {transition_expr} AS transitionTime,
               {s.pre_task_control_expr('ro_i', 'e_i')} AS fromTaskPreparationEvents,
               {s.pre_task_control_expr('ro_j', 'e_j')} AS toTaskPreparationEvents,
@@ -215,6 +238,8 @@ class CollaborationPatternCypher:
         intermediate_duration = s.seconds_between(f"e_j.{s.event_start_prop}", f"e_j.{s.event_end_prop}")
         return_time = s.seconds_between(f"e_i.{s.event_end_prop}", f"e_k.{s.event_start_prop}")
         segment_consistency = ""
+        segment_parent_match = ""
+        segment_parent_predicate = ""
         if objective_type == "Mission":
             segment_correlations = [
                 f"EXISTS {{ MATCH {s.event(event)}-{s.rel(s.corr_rel)}->{s.entity(f'segment_{event}')} "
@@ -231,15 +256,28 @@ class CollaborationPatternCypher:
                       WHERE {s.type_filter('shared_segment', 'Segment')}
                     }}
                   )"""
+        elif objective_type == "Segment":
+            # Segment IDs may be reused across Missions. The parent Mission
+            # disambiguates the concrete Segment instance represented in the log.
+            segment_parent_match = f"""
+                MATCH {s.entity('o')}-{s.rel(s.part_of_rel)}->{s.entity('parent_mission')}
+                MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->(parent_mission)<-{s.rel(s.corr_rel)}-{s.event('e_j')}
+                MATCH {s.event('e_k')}-{s.rel(s.corr_rel)}->(parent_mission)"""
+            segment_parent_predicate = (
+                f"AND {s.type_filter('parent_mission', 'Mission')}"
+            )
         return f"""
                 MATCH {s.event('e_i')}-{s.rel(s.df_rel, 'df_ij')}->{s.event('e_j')}-{s.rel(s.df_rel, 'df_jk')}->{s.event('e_k')}
                 MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('o')}<-{s.rel(s.corr_rel)}-{s.event('e_j')}
                 MATCH {s.event('e_k')}-{s.rel(s.corr_rel)}->(o)
+                {segment_parent_match}
                 MATCH {s.event('e_i')}-{s.rel(s.corr_rel)}->{s.entity('ro_a')}<-{s.rel(s.corr_rel)}-{s.event('e_k')}
                 MATCH {s.event('e_j')}-{s.rel(s.corr_rel)}->{s.entity('ro_b')}
                 MATCH {s.event('e_j')}-{s.rel(s.req_rel)}->{s.capability('c')}<-{s.rel(s.has_rel)}-{s.entity('ro_b')}
                 WHERE {s.type_filter('o', objective_type)} AND {s.type_filter('ro_a', 'Robot')}
-                  AND {s.type_filter('ro_b', 'Robot')} AND {pred1} AND {pred2} AND ro_a <> ro_b
+                  AND {s.type_filter('ro_b', 'Robot')}
+                  {segment_parent_predicate}
+                  AND {pred1} AND {pred2} AND ro_a <> ro_b
                   AND {s.event_type_filter('e_i', 'Task')} AND {s.event_type_filter('e_j', 'Task')}
                   AND {s.event_type_filter('e_k', 'Task')}
                   AND NOT (ro_a)-{s.rel(s.has_rel)}->(c)
@@ -281,10 +319,10 @@ class CollaborationPatternCypher:
             WHERE {s.event_type_filter('e2', 'Task')}
             WITH m1, m2, start1, end1, min(e2.{s.event_start_prop}) AS start2, max(e2.{s.event_end_prop}) AS end2
             WHERE start1 < end2 AND start2 < end1
-            MATCH {s.entity('m1')}<-{s.rel(s.corr_rel)}-{s.event('ev1')}-{s.rel(s.corr_rel)}->{s.entity('r1')}
+            OPTIONAL MATCH {s.entity('m1')}<-{s.rel(s.corr_rel)}-{s.event('ev1')}-{s.rel(s.corr_rel)}->{s.entity('r1')}
             WHERE {s.type_filter('r1', 'Robot')} AND {s.event_type_filter('ev1', 'Task')}
             WITH m1, m2, start1, end1, start2, end2, collect(DISTINCT r1) AS team1
-            MATCH {s.entity('m2')}<-{s.rel(s.corr_rel)}-{s.event('ev2')}-{s.rel(s.corr_rel)}->{s.entity('r2')}
+            OPTIONAL MATCH {s.entity('m2')}<-{s.rel(s.corr_rel)}-{s.event('ev2')}-{s.rel(s.corr_rel)}->{s.entity('r2')}
             WHERE {s.type_filter('r2', 'Robot')} AND {s.event_type_filter('ev2', 'Task')}
             WITH
               m1, m2, start1, end1, start2, end2, team1, collect(DISTINCT r2) AS team2
@@ -295,12 +333,10 @@ class CollaborationPatternCypher:
             WHERE {s.event_type_filter('reqEvent2', 'Task')}
             WITH m1, m2, start1, end1, start2, end2, team1, team2, req1, collect(DISTINCT cap2) AS req2
             WITH m1, m2, start1, end1, start2, end2, team1, team2,
-              size(team1) + size([r IN team2 WHERE NOT r IN team1]) AS unionTeamSize,
               [r IN team1 WHERE r IN team2] AS sharedRobots,
               [c IN req1 WHERE c IN req2] AS sharedRequiredCapabilities,
               CASE WHEN start1 >= start2 THEN start1 ELSE start2 END AS overlapStart,
               CASE WHEN end1 <= end2 THEN end1 ELSE end2 END AS overlapEnd
-            WHERE unionTeamSize > 1
             RETURN m1 AS mission1, m2 AS mission2, team1, team2, sharedRobots, 
               size(sharedRobots) AS robotCompetition, sharedRequiredCapabilities,
               [c IN sharedRequiredCapabilities |
@@ -328,10 +364,10 @@ class CollaborationPatternCypher:
                 WHERE {s.event_type_filter('e2', 'Task')}
                 WITH s1, s2, m, start1, end1, min(e2.{s.event_start_prop}) AS start2, max(e2.{s.event_end_prop}) AS end2
                 WHERE start1 < end2 AND start2 < end1
-                MATCH {s.entity('s1')}<-{s.rel(s.corr_rel)}-{s.event('ev1')}-{s.rel(s.corr_rel)}->{s.entity('r1')}
+                OPTIONAL MATCH {s.entity('s1')}<-{s.rel(s.corr_rel)}-{s.event('ev1')}-{s.rel(s.corr_rel)}->{s.entity('r1')}
                 WHERE {s.type_filter('r1', 'Robot')} AND {s.event_type_filter('ev1', 'Task')}
                 WITH s1, s2, m, start1, end1, start2, end2, collect(DISTINCT r1) AS team1
-                MATCH {s.entity('s2')}<-{s.rel(s.corr_rel)}-{s.event('ev2')}-{s.rel(s.corr_rel)}->{s.entity('r2')}
+                OPTIONAL MATCH {s.entity('s2')}<-{s.rel(s.corr_rel)}-{s.event('ev2')}-{s.rel(s.corr_rel)}->{s.entity('r2')}
                 WHERE {s.type_filter('r2', 'Robot')} AND {s.event_type_filter('ev2', 'Task')}
                 WITH s1, s2, m, start1, end1, start2, end2, team1, collect(DISTINCT r2) AS team2
                 OPTIONAL MATCH {s.entity('s1')}<-{s.rel(s.corr_rel)}-{s.event('reqEvent1')}-{s.rel(s.req_rel)}->{s.capability('cap1')}
@@ -341,12 +377,10 @@ class CollaborationPatternCypher:
                 WHERE {s.event_type_filter('reqEvent2', 'Task')}
                 WITH s1, s2, m, start1, end1, start2, end2, team1, team2, req1, collect(DISTINCT cap2) AS req2
                 WITH s1, s2, m, start1, end1, start2, end2, team1, team2,
-                  size(team1) + size([r IN team2 WHERE NOT r IN team1]) AS unionTeamSize,
                   [r IN team1 WHERE r IN team2] AS sharedRobots,
                   [c IN req1 WHERE c IN req2] AS sharedRequiredCapabilities,
                   CASE WHEN start1 >= start2 THEN start1 ELSE start2 END AS overlapStart,
                   CASE WHEN end1 <= end2 THEN end1 ELSE end2 END AS overlapEnd
-                WHERE unionTeamSize > 1
                 RETURN s1 AS segment1, s2 AS segment2, m AS mission, 
                       team1, team2, sharedRobots, size(sharedRobots) AS robotCompetition,
                       sharedRequiredCapabilities,

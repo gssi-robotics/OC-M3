@@ -1618,7 +1618,7 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
     with c3:
         show_df_backbone = st.checkbox(
             "Show robot sequence backbone",
-            value=True,
+            value=False,
             key="collab_show_df_backbone",
         )
     with c4:
@@ -1642,7 +1642,7 @@ def render_timeline_tab(driver: Any, database: Optional[str], catalog: Dict[str,
     with c7:
         show_control_events = st.checkbox(
             "Show Control events",
-            value=True,
+            value=False,
             key="collab_show_control_events",
             help="Show robot Control events inline with Task events. Collaboration structures remain Task-based.",
         )
