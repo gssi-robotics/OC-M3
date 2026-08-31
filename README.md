@@ -1,10 +1,15 @@
-# OC-M3: Object-Centric Collaboration Mining for Adaptive Multi-Robot Missions
+# Object-Centric Collaboration Mining for Adaptive Multi-Robot Missions
 
-This repository contains the supporting implementation and reproducibility data for the _Object-Centric Collaboration Mining for Adaptive Multi-Robot Missions_ journal submission. 
+This repository contains **OC-M3**, the supporting analysis implementation and replication package for the submitted paper _Object-Centric Collaboration Mining for Adaptive Multi-Robot Missions_.
 
 OC-M3 imports multi-robot execution logs into a Neo4j event knowledge graph (EKG), instantiates collaboration structures, and provides object-centric analyses and exportable evaluation tables through a Streamlit interface.
 
 The evaluation is intended to determine whether the proposed collaboration structures and indicators can **characterize and explain execution behavior induced by different multi-robot task-allocation strategies**. It does not claim to benchmark or rank the task-allocation algorithms themselves.
+
+## Related MULTI-3 implementation
+
+The multi-robot mission implementation framework is maintained in the separate [gssi-robotics/multi-3-ocpm](https://github.com/gssi-robotics/multi-3-ocpm) repository. Use that repository to inspect or run the **MULTI-3 framework** that drives the multi-robot executions.
+
 
 ## Main features
 
@@ -17,9 +22,10 @@ The evaluation is intended to determine whether the proposed collaboration struc
   - **Capability-driven return**: a robot returns to an objective after an intermediate task whose capability requirements explain the allocation change.
   - **Parallel collaboration**: objective instances overlap in time and involve robots concurrently.
 - Mission, segment, robot, capability, duration, transition, process-map, timeline, and pairwise analyses.
+- Single-objective and aggregated Resource Perspectives for robot contribution, capability demand, capability utilization, and collaboration relationships.
 - Robot timelines that can include or hide Control events while preserving their explanatory context.
 - Downloadable, analysis-ready CSV evaluation package.
-- Synthetic log generation and ground-truth occurrence data for reproducibility checks.
+- Paper replication logs and reusable EKG loader configurations.
 
 ## Event knowledge graph
 
@@ -40,15 +46,14 @@ The personalized aggregation module creates `Class` nodes, `OBS` relations, and 
 
 ```text
 OC-M3/
-├── app/                              Streamlit application and analysis views
-├── query-lib/                        EKG construction, Cypher queries, and evaluation utilities
-├── replication-data/     Journal replication datasets for four allocation strategies
-    └── agriculture/
-    └── cleaning/
-    └── order_management/ 
+├── app/                         Streamlit application and analysis views
+├── query-lib/                   EKG construction, Cypher queries, and evaluation utilities
+└── replication-data/            Paper replication inputs
+    ├── agriculture/
+    ├── cleaning/
+    └── order_management/
 ```
 
-Generator development is tracked on the `log-generator` ([link](https://github.com/gssi-robotics/OC-M3/tree/log-generator)) branch. 
 
 ## Requirements
 
@@ -76,7 +81,7 @@ brew install graphviz
 sudo apt-get install graphviz
 ```
 
-Neo4j must be running before EKG creation or analysis. The application defaults to `neo4j://localhost:7687`; credentials and the target Neo4j database can be changed in the sidebar.
+Neo4j must be running before EKG creation or analysis. The application defaults to `neo4j://localhost:7687`. Each imported log is isolated in a dedicated database named `ekg-<log-name>`; this requires Neo4j multi-database support and `CREATE DATABASE` privileges for first-time creation.
 
 ## Run the application
 
@@ -93,41 +98,58 @@ The interface contains three modules:
 2. **Aggregate EKG** builds and visualizes a personalized class-level aggregation, including class durations and aggregate duration summaries.
 3. **Collaboration Analysis** instantiates the collaboration queries and provides evaluation panels, timelines, process maps, tables, and downloadable data.
 
-Enter the Neo4j connection settings once in the shared sidebar. The selected database is passed to the loader, aggregation, and collaboration-analysis sessions.
+Enter the Neo4j connection settings once in the shared sidebar. Use **Refresh EKG databases** to discover loader-created databases and select the active one. The selected database is passed to aggregation and collaboration-analysis sessions, and changing it invalidates results cached from the previous graph.
 
-## Reproduce the agriculture experiment
+## Use the replication data
 
-The paper-facing agriculture data are under [`replication-data/agriculture`](replication-data/agriculture). Four allocation strategies are provided for seed `10`:
+[`replication-data`](replication-data) contains the fixed EKG inputs used to reproduce the paper analyses. It covers three scenarios and three task-allocation strategies, for a total of nine execution logs:
 
-| Strategy | Log name | Directory |
-| --- | --- | --- |
-| Auction | `agriculture_auction_seed10` | `agriculture_auction_seed10/` |
-| Greedy | `agriculture_greedy_seed10` | `agriculture_greedy_seed10/` |
-| Hungarian | `agriculture_hungarian_seed10` | `agriculture_hungarian_seed10/` |
-| Random | `agriculture_random_seed10` | `agriculture_random_seed10/` |
+| Scenario | Event logs | Loader configurations | Shared tables |
+| --- | --- | --- | --- |
+| Agriculture | `agriculture_{baseline,capability-preserving,closest}.csv` | `{baseline,capability-preserving,closest}.json` | `robot_table.csv`, `task_table.csv` |
+| Cleaning | `cleaning_{baseline,capability-preserving,closest}.csv` | `{baseline,capability-preserving,closest}.json` | `robot_table.csv`, `task_table.csv` |
+| Order management | `order_management_{baseline,capability-preserving,closest}.csv` | `{baseline,capability-preserving,closest}.json` | `robot_table.csv`, `task_table.csv` |
 
-Each directory contains the EKG input tables, source configuration, loader configuration, ground-truth assignments and collaboration occurrences, and summary tables.
+Each scenario directory contains:
 
-### Load one strategy
+- one event log per allocation strategy;
+- `robot_table.csv`, which declares each robot's semicolon-separated capabilities;
+- `task_table.csv`, which declares each task's semicolon-separated required capabilities;
+- one JSON loader configuration per strategy, containing the complete column mapping and recommended `log_name`.
 
-1. Start Neo4j and launch the Streamlit application.
-2. Open **Load EKG**.
-3. Upload the strategy's `events.csv`, `robot_table.csv`, and `task_table.csv`, then confirm the displayed mappings; or load its `ekg_loader_config.json` after correcting its paths.
-4. Keep cleanup disabled when loading multiple strategy logs into the same database. Enable it only when the target database should be cleared first.
-5. Select **Create EKG** and wait for all import and inference queries to complete.
-6. Repeat for the remaining strategies to compare them in one analysis database.
+The CSV logs are the direct replication inputs for OC-M3. The JSON files are **OC-M3 loader configurations**, not MULTI-3 execution configurations. To regenerate executions rather than analyze the provided logs, use the [MULTI-3 implementation repository](https://github.com/gssi-robotics/multi-3-ocpm) and follow its documentation, then import the generated event tables into OC-M3.
 
-> **Portability note:** paths inside the committed `ekg_loader_config.json` files record the machine on which the datasets were generated. On another machine, either update every `path` field to the local checkout or recreate the configuration through **Load EKG**. The CSV data themselves are portable.
+### Import a replication log
+
+The most portable procedure is to configure the importer from the supplied CSV files:
+
+1. Start Neo4j, launch the Streamlit application, and open **Load EKG**.
+2. Choose a unique **Log name**. The committed JSON for the selected execution provides the paper-facing value, such as `agri_baseline`, `clean_capability_preserving`, or `om_closest`.
+3. Upload the selected scenario/strategy event log and map `event_id`, `activity`, `event_type`, `start_time`, and `end_time` to their corresponding fields.
+4. Map the entity columns as `robot_id` to **Robot**, `mission_id` to **Mission**, and `segment_id` to **Segment**.
+5. Upload the scenario's `robot_table.csv` as the optional Robot attribute table. Use `robot_id` as its unique identifier and include `capabilities`. Mission and Segment entities can be created directly from the event log.
+6. Upload the scenario's `task_table.csv` as the task-capability table. Map `task_name` to the task/activity field and `required_capability` to the capability field.
+7. Generate the backend configuration, review the target `ekg-<log-name>` database, and select **Create EKG**.
+8. Repeat these steps for the other executions that must be analyzed. Each log is intentionally stored in its own Neo4j database.
+
+Alternatively, select **Optional loader config JSON** and upload the strategy's JSON file. These committed configurations contain absolute file paths from the machine on which they were prepared. Before using one on another machine, replace every `path` value with the absolute path to the corresponding CSV in the local checkout. The UI validates the resolved paths before EKG creation.
+
+### Analyze a replication log
+
+1. In the shared sidebar, select **Refresh EKG databases**.
+2. Select the `ekg-<log-name>` database for the execution to analyze.
+3. Open **Aggregate EKG** or **Collaboration Analysis**. All subsequent queries, metrics, tables, and visualizations use the active database.
+4. When switching to another execution, change the active database in the same selector. The analysis state is refreshed so results from different executions are not mixed.
 
 
 ### Extract the evaluation package
 
-1. Open **Collaboration Analysis** and connect to the database containing the imported logs.
-2. Select the relevant strategy logs.
+1. Refresh the EKG database list and select the database containing the desired replication log.
+2. Open **Collaboration Analysis** and connect to the selected database.
 3. Generate the evaluation dataset.
 4. Inspect any export table directly in the interface or select **Download evaluation package (.zip)**.
 
-The ZIP contains the following CSV files:
+The ZIP contains the following principal CSV files:
 
 | File | Purpose |
 | --- | --- |
@@ -141,7 +163,7 @@ The ZIP contains the following CSV files:
 | `activity_duration_summary.csv` | Task and Control activity execution-duration distributions. |
 | `activity_transition_summary.csv` | Task `DF` and all-event robot `DF_Control` transition-time distributions. |
 
-Durations and transition times in the evaluation CSVs are expressed in seconds. The `strategy` column corresponds to the EKG `Log` property selected in the UI.
+Durations and transition times in the evaluation CSVs are expressed in seconds. The `strategy` column corresponds to the EKG `Log` property selected in the UI. To compare strategies or scenarios, export each dedicated database and combine equivalent CSV tables using this column while retaining the scenario and loader configuration as provenance.
 
 
 ## Input expectations
@@ -158,16 +180,16 @@ Timestamps should be ISO-8601 compatible, for example `2026-01-01T08:00:00`. A t
 
 ## Reproducibility notes
 
-- Import all logs to be compared into the same Neo4j database without cleanup between imports, or select the appropriate database before each analysis.
-- Use distinct `log_name` values; they become the EKG `Log` property and the strategy identifier in exports.
-- Do not combine evaluation files produced from different Neo4j databases unless that merge is intentional and documented.
+- Import each execution log into its dedicated `ekg-<log-name>` database. This prevents identifier collisions and keeps analytical queries independent of log filters.
+- Use distinct `log_name` values; they determine the database name, the EKG `Log` property, and the strategy identifier in exports.
+- Select each database in turn when extracting results. Combine evaluation files externally only when that merge is intentional and documented.
 - Control events are included in robot `DF_Control` sequences for explainability but excluded from Task-only `DF` inference.
 - Parallel collaboration counts overlapping objective instances. It is not a synchronization relation between missions.
 - Generated results depend on the selected scenario, allocation policy, robot fleet, seed, and generator version. Record all of these with reported results.
 
 ## Citation
 
-If you use this software or the replication data, please cite the accompanying OC-M3 journal article. Full bibliographic metadata will be added after publication.
+If you use this software or the replication data, please refer to the submitted paper _Object-Centric Collaboration Mining for Adaptive Multi-Robot Missions_. Full bibliographic metadata will be added after publication.
 
 ## License
 
