@@ -626,6 +626,10 @@ def _strategy_summary(payload: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str
             ]
             switches = [row for row in occurrences if row["structure"] == "Objective switch"]
             returns = [row for row in occurrences if row["structure"] == "Capability-driven return"]
+            parallel = [
+                row for row in occurrences
+                if row["structure"] == "Parallel collaboration"
+            ]
             summary.append(
                 {
                     "strategy": strategy,
@@ -645,6 +649,9 @@ def _strategy_summary(payload: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str
                     "avg_handover_transition_seconds": _mean(row.get("transition_seconds") for row in handovers),
                     "avg_switch_transition_seconds": _mean(row.get("transition_seconds") for row in switches),
                     "avg_capability_return_seconds": _mean(row.get("return_seconds") for row in returns),
+                    "avg_parallel_overlap_seconds": _mean(
+                        row.get("overlap_seconds") for row in parallel
+                    ),
                     "avg_objective_throughput_seconds": _mean(
                         row["value"] for row in performance if row["metric"] == "throughputSeconds"
                     ),
